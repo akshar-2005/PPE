@@ -1,0 +1,18 @@
+# Python
+backend/venv/
+__pycache__/
+*.pyc
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Local data
+backend/history.db
+backend/outputs/*
+!backend/outputs/.gitkeep
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
