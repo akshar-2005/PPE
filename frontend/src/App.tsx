@@ -4,6 +4,7 @@ import { Dashboard } from './pages/Dashboard';
 import { ImageAnalysis } from './pages/ImageAnalysis';
 import { HistoryPage } from './pages/History';
 import { HistoryDetail } from './pages/HistoryDetail';
+import { Reports } from './pages/Reports';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
 export function App() {
@@ -16,7 +17,7 @@ export function App() {
           <Route path="analysis" element={<ImageAnalysis />} />
           <Route path="history" element={<HistoryPage />} />
           <Route path="history/:id" element={<HistoryDetail />} />
-          <Route path="reports" element={<PlaceholderPage title="Reports" />} />
+          <Route path="reports" element={<Reports />} />
           <Route path="settings" element={<PlaceholderPage title="Settings" />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

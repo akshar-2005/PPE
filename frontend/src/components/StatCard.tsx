@@ -3,7 +3,7 @@ import type { LucideIcon } from 'lucide-react';
 
 interface StatCardProps {
   title: string;
-  value: number;
+  value: number | string;
   icon: LucideIcon;
   type: 'total' | 'compliant' | 'violations';
 }
