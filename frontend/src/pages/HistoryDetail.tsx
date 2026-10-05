@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ArrowLeft, Loader2, AlertTriangle, FileText } from 'lucide-react';
+import { ArrowLeft, AlertTriangle, FileText } from 'lucide-react';
 import { API_BASE } from '../config';
 import type { AnalysisResult } from '../types';
 import { formatDate } from '../utils/format';
@@ -43,9 +43,34 @@ export const HistoryDetail: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-slate-400">
-        <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-        <p className="text-sm">Loading inspection record...</p>
+      <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn">
+        <div className="flex items-center gap-4 pb-2 border-b border-slate-800">
+          <div className="w-9 h-9 bg-slate-800 animate-pulse rounded-xl" />
+          <div className="space-y-2 flex-1">
+            <div className="h-6 w-48 bg-slate-800 animate-pulse rounded-lg" />
+            <div className="h-4 w-72 bg-slate-800/60 animate-pulse rounded-lg" />
+          </div>
+        </div>
+
+        {/* Skeleton Stat Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-28 bg-slate-900/60 border border-slate-800 rounded-2xl animate-pulse p-5" />
+          ))}
+        </div>
+
+        {/* Skeleton Status Banner */}
+        <div className="h-16 bg-slate-900/60 border border-slate-800 rounded-2xl animate-pulse" />
+
+        {/* Skeleton Image and Worker Cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-7 h-96 bg-slate-900/60 border border-slate-800 rounded-2xl animate-pulse" />
+          <div className="lg:col-span-5 space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-28 bg-slate-900/60 border border-slate-800 rounded-xl animate-pulse" />
+            ))}
+          </div>
+        </div>
       </div>
     );
   }
@@ -93,7 +118,7 @@ export const HistoryDetail: React.FC = () => {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn">
       {/* Top Header Navigation */}
       <div className="flex items-center justify-between pb-2 border-b border-slate-800">
         <div className="flex items-center gap-4">

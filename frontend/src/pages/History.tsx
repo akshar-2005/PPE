@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import {
   History as HistoryIcon,
   Filter,
-  Loader2,
   AlertTriangle,
   Plus,
   Users,
@@ -52,9 +51,35 @@ export const HistoryPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-slate-400">
-        <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-        <p className="text-sm">Loading analysis history...</p>
+      <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="space-y-2">
+            <div className="h-6 w-48 bg-slate-800 animate-pulse rounded-lg" />
+            <div className="h-4 w-72 bg-slate-800/60 animate-pulse rounded-lg" />
+          </div>
+          <div className="h-9 w-64 bg-slate-800 animate-pulse rounded-xl" />
+        </div>
+
+        {/* Skeleton History Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div
+              key={i}
+              className="bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between animate-pulse space-y-4"
+            >
+              <div className="rounded-xl bg-slate-950 aspect-video w-full border border-slate-800/60" />
+              <div className="space-y-2">
+                <div className="h-4 w-3/4 bg-slate-800 rounded" />
+                <div className="h-3 w-1/2 bg-slate-800/60 rounded" />
+              </div>
+              <div className="pt-3 border-t border-slate-800/60 grid grid-cols-3 gap-2">
+                <div className="h-8 bg-slate-950/40 rounded-lg" />
+                <div className="h-8 bg-slate-950/40 rounded-lg" />
+                <div className="h-8 bg-slate-950/40 rounded-lg" />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -79,7 +104,7 @@ export const HistoryPage: React.FC = () => {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn">
       {/* Header & Filter Controls */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
@@ -93,7 +118,7 @@ export const HistoryPage: React.FC = () => {
         </div>
 
         {/* Filter Buttons */}
-        <div className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 self-stretch sm:self-auto">
+        <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 p-1 rounded-xl bg-slate-900 border border-slate-800 self-stretch sm:self-auto">
           <button
             type="button"
             onClick={() => setFilter('all')}

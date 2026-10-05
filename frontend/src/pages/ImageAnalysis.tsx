@@ -4,12 +4,14 @@ import { API_BASE } from '../config';
 import type { AnalysisResult } from '../types';
 import { UploadZone } from '../components/UploadZone';
 import { ResultView } from '../components/ResultView';
+import { useToast } from '../context/ToastContext';
 
 export const ImageAnalysis: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
+  const { success: toastSuccess, error: toastError } = useToast();
 
   const handleAnalyze = async () => {
     if (!selectedFile) return;
@@ -30,12 +32,19 @@ export const ImageAnalysis: React.FC = () => {
         const errData = await res.json().catch(() => null);
         const errMsg = errData?.detail || `Server error (${res.status})`;
         setError(errMsg);
+        toastError(errMsg, 'Analysis Failed');
       } else {
         const data: AnalysisResult = await res.json();
         setResult(data);
+        toastSuccess(
+          `Analysis complete: ${data.total} worker${data.total !== 1 ? 's' : ''}, ${data.violations} violation${data.violations !== 1 ? 's' : ''}`,
+          'Scan Complete'
+        );
       }
     } catch {
-      setError('Cannot reach the server. Is the backend running?');
+      const errMsg = 'Cannot reach the server. Is the backend running?';
+      setError(errMsg);
+      toastError(errMsg, 'Connection Error');
     } finally {
       setIsLoading(false);
     }

@@ -7,7 +7,6 @@ import {
   TrendingUp,
   Plus,
   ArrowRight,
-  Loader2,
   AlertTriangle,
   FolderOpen,
 } from 'lucide-react';
@@ -55,9 +54,42 @@ export const Dashboard: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] gap-3 text-slate-400">
-        <Loader2 className="w-8 h-8 animate-spin text-cyan-400" />
-        <p className="text-sm">Loading dashboard telemetry...</p>
+      <div className="max-w-6xl mx-auto space-y-6 animate-fadeIn">
+        <div className="flex items-center justify-between">
+          <div className="space-y-2">
+            <div className="h-6 w-44 bg-slate-800 animate-pulse rounded-lg" />
+            <div className="h-4 w-64 bg-slate-800/60 animate-pulse rounded-lg" />
+          </div>
+          <div className="h-10 w-32 bg-slate-800 animate-pulse rounded-xl" />
+        </div>
+
+        {/* Skeleton Stat Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-28 bg-slate-900/60 border border-slate-800 rounded-2xl animate-pulse p-5">
+              <div className="flex justify-between items-center">
+                <div className="space-y-2 flex-1">
+                  <div className="h-3 w-24 bg-slate-800 rounded" />
+                  <div className="h-7 w-16 bg-slate-800 rounded" />
+                </div>
+                <div className="w-12 h-12 rounded-xl bg-slate-800/80" />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Skeleton Donut and Recent List */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <div className="lg:col-span-5 h-64 bg-slate-900/60 border border-slate-800 rounded-2xl animate-pulse p-6" />
+          <div className="lg:col-span-7 h-64 bg-slate-900/60 border border-slate-800 rounded-2xl animate-pulse p-6 space-y-4">
+            <div className="h-4 w-32 bg-slate-800 rounded" />
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-14 bg-slate-950/40 rounded-xl border border-slate-800/60" />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     );
   }

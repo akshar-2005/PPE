@@ -1,17 +1,28 @@
-import React from 'react';
-import { Users, ShieldCheck, AlertOctagon, ExternalLink } from 'lucide-react';
+import React, { useState } from 'react';
+import { Users, ShieldCheck, AlertOctagon, ExternalLink, Maximize2 } from 'lucide-react';
 import type { AnalysisResult } from '../types';
 import { StatCard } from './StatCard';
 import { StatusBanner } from './StatusBanner';
 import { WorkerCard } from './WorkerCard';
+import { ImageViewerModal } from './ImageViewerModal';
 
 interface ResultViewProps {
   result: AnalysisResult;
 }
 
 export const ResultView: React.FC<ResultViewProps> = ({ result }) => {
+  const [isViewerOpen, setIsViewerOpen] = useState(false);
+
   return (
     <div className="space-y-6">
+      {/* Full-screen Image Modal */}
+      <ImageViewerModal
+        isOpen={isViewerOpen}
+        imageUrl={result.image_url}
+        title={`Annotated Result — ${result.filename}`}
+        onClose={() => setIsViewerOpen(false)}
+      />
+
       {/* Three Stat Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
@@ -41,24 +52,45 @@ export const ResultView: React.FC<ResultViewProps> = ({ result }) => {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Annotated Image Column */}
         <div className="lg:col-span-7 bg-slate-900/60 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between">
-          <div className="relative group overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={() => setIsViewerOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setIsViewerOpen(true);
+              }
+            }}
+            aria-label="Click to enlarge annotated image in full screen"
+            className="relative group overflow-hidden rounded-xl border border-slate-800 bg-slate-950 cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"
+          >
             <img
               src={result.image_url}
-              alt="Annotated detection results"
-              className="w-full h-auto max-h-[500px] object-contain rounded-xl"
+              alt={`Annotated detection results for ${result.filename}`}
+              className="w-full h-auto max-h-[500px] object-contain rounded-xl transition-transform duration-300 group-hover:scale-[1.01]"
             />
+            {/* Click to expand hover overlay badge */}
+            <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center pointer-events-none">
+              <span className="px-3.5 py-1.5 rounded-full bg-slate-900/90 text-cyan-400 border border-cyan-500/30 text-xs font-semibold flex items-center gap-1.5 shadow-lg backdrop-blur-sm">
+                <Maximize2 className="w-3.5 h-3.5" />
+                <span>Click to expand full screen</span>
+              </span>
+            </div>
           </div>
           <div className="mt-3 flex items-center justify-between text-xs text-slate-400 px-1">
-            <span>Annotated Bounding Box Visualizer</span>
-            <a
-              href={result.image_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-cyan-400 hover:text-cyan-300 font-medium hover:underline"
+            <span className="flex items-center gap-1.5">
+              <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Click image to enlarge</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setIsViewerOpen(true)}
+              className="inline-flex items-center gap-1.5 text-cyan-400 hover:text-cyan-300 font-medium hover:underline focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none rounded"
             >
-              <span>Open full size</span>
+              <span>Full screen view</span>
               <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+            </button>
           </div>
         </div>
 

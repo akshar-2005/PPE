@@ -27,6 +27,7 @@ import {
   downloadCsvFile,
   getCsvFilename,
 } from '../utils/csv';
+import { useToast } from '../context/ToastContext';
 
 interface ViolationBreakdown {
   helmetOnly: number;
@@ -134,12 +135,15 @@ export const Reports: React.FC = () => {
     };
   }, [detailedRecords]);
 
+  const { success: toastSuccess } = useToast();
+
   // Export handlers
   const handleDownloadSummary = () => {
     if (history.length === 0) return;
     const csvContent = generateSummaryCsv(history);
     const filename = getCsvFilename('ppe_summary');
     downloadCsvFile(filename, csvContent);
+    toastSuccess(`Exported summary report as ${filename}`, 'CSV Downloaded');
   };
 
   const handleDownloadDetails = () => {
@@ -147,6 +151,7 @@ export const Reports: React.FC = () => {
     const csvContent = generateWorkerDetailsCsv(detailedRecords);
     const filename = getCsvFilename('ppe_worker_details');
     downloadCsvFile(filename, csvContent);
+    toastSuccess(`Exported worker details as ${filename}`, 'CSV Downloaded');
   };
 
   const handlePrint = () => {
@@ -206,7 +211,7 @@ export const Reports: React.FC = () => {
   const isEmpty = stats.total_analyses === 0;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 print-page">
+    <div className="max-w-6xl mx-auto space-y-6 print-page animate-fadeIn">
       {/* Printable Report Header (Visible only in print mode) */}
       <div className="print-only border-b-2 border-slate-800 pb-4 mb-6">
         <h1 className="text-2xl font-bold text-slate-900">PPE Vision — Safety Compliance Audit Report</h1>
@@ -233,7 +238,8 @@ export const Reports: React.FC = () => {
           <button
             type="button"
             onClick={fetchReportsData}
-            className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors"
+            aria-label="Refresh Report Data"
+            className="p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-800 transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"
             title="Refresh Report Data"
           >
             <RefreshCw className="w-4 h-4" />
