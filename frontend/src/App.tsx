@@ -5,7 +5,7 @@ import { ImageAnalysis } from './pages/ImageAnalysis';
 import { HistoryPage } from './pages/History';
 import { HistoryDetail } from './pages/HistoryDetail';
 import { Reports } from './pages/Reports';
-import { PlaceholderPage } from './pages/PlaceholderPage';
+import { SettingsPage } from './pages/Settings';
 import { NotFound } from './pages/NotFound';
 import { ToastProvider } from './context/ToastContext';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -23,7 +23,7 @@ export function App() {
               <Route path="history" element={<HistoryPage />} />
               <Route path="history/:id" element={<HistoryDetail />} />
               <Route path="reports" element={<Reports />} />
-              <Route path="settings" element={<PlaceholderPage title="Settings" />} />
+              <Route path="settings" element={<SettingsPage />} />
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>

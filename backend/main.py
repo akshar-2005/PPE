@@ -9,12 +9,29 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from database import init_db, save_analysis, list_analyses, get_analysis, get_stats
+from database import (
+    init_db,
+    save_analysis,
+    list_analyses,
+    get_analysis,
+    get_stats,
+    get_settings,
+    save_settings,
+    reset_settings,
+)
 from pipeline import analyze_image, annotate
 
 OUTPUTS_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
+
+class SettingsModel(BaseModel):
+    require_helmet: bool
+    require_vest: bool
+    person_conf: float
+    ppe_conf: float
+    decision_conf: float
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,6 +74,43 @@ def sanitize(val):
 def health_check():
     return {"status": "online"}
 
+@app.get("/settings")
+def get_settings_endpoint():
+    return get_settings()
+
+@app.put("/settings")
+def update_settings_endpoint(payload: SettingsModel):
+    # Validation rules:
+    # 1. person_conf, ppe_conf and decision_conf between 0.05 and 0.95
+    if not (0.05 <= payload.person_conf <= 0.95):
+        raise HTTPException(
+            status_code=400,
+            detail="person_conf must be between 0.05 and 0.95"
+        )
+    if not (0.05 <= payload.ppe_conf <= 0.95):
+        raise HTTPException(
+            status_code=400,
+            detail="ppe_conf must be between 0.05 and 0.95"
+        )
+    if not (0.05 <= payload.decision_conf <= 0.95):
+        raise HTTPException(
+            status_code=400,
+            detail="decision_conf must be between 0.05 and 0.95"
+        )
+    # 2. At least one of require_helmet or require_vest must be true
+    if not payload.require_helmet and not payload.require_vest:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one PPE item (require_helmet or require_vest) must be required."
+        )
+
+    updated = save_settings(payload.model_dump())
+    return updated
+
+@app.post("/settings/reset")
+def reset_settings_endpoint():
+    return reset_settings()
+
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE = 10 * 1024 * 1024 # 10 MB
 
@@ -84,8 +138,11 @@ def analyze_endpoint(request: Request, file: UploadFile = File(...)):
     if img_bgr is None or img_bgr.size == 0:
         raise HTTPException(status_code=400, detail="Could not decode image file or corrupted file.")
 
+    # Load current settings for this analysis
+    current_settings = get_settings()
+
     try:
-        analysis_result = analyze_image(img_bgr)
+        analysis_result = analyze_image(img_bgr, settings=current_settings)
         annotated_img = annotate(img_bgr, analysis_result)
     except Exception as e:
         traceback.print_exc()
@@ -99,6 +156,7 @@ def analyze_endpoint(request: Request, file: UploadFile = File(...)):
     cv2.imwrite(out_filepath, annotated_img)
 
     sanitized_workers = sanitize(analysis_result["workers"])
+    sanitized_settings = sanitize(current_settings)
 
     save_analysis(
         analysis_id=analysis_id,
@@ -108,7 +166,8 @@ def analyze_endpoint(request: Request, file: UploadFile = File(...)):
         violations=analysis_result["violations"],
         image_path=out_filepath,
         workers=sanitized_workers,
-        created_at=created_at
+        created_at=created_at,
+        settings=current_settings
     )
 
     base_url = str(request.base_url).rstrip("/")
@@ -122,6 +181,7 @@ def analyze_endpoint(request: Request, file: UploadFile = File(...)):
         "compliant": sanitize(analysis_result["compliant"]),
         "violations": sanitize(analysis_result["violations"]),
         "workers": sanitized_workers,
+        "settings": sanitized_settings,
         "image_url": image_url
     }
 
@@ -158,6 +218,8 @@ def history_detail_endpoint(request: Request, analysis_id: str):
     record["compliant"] = sanitize(record["compliant"])
     record["violations"] = sanitize(record["violations"])
     record["workers"] = sanitize(record["workers"])
+    if "settings" in record:
+        record["settings"] = sanitize(record["settings"])
     
     return record
 

@@ -1,15 +1,19 @@
 import React from 'react';
-import { CheckCircle2, XCircle, HardHat, Shirt, AlertTriangle } from 'lucide-react';
-import type { Worker } from '../types';
+import { CheckCircle2, XCircle, MinusCircle, HardHat, Shirt, AlertTriangle } from 'lucide-react';
+import type { Worker, AnalysisSettings } from '../types';
 
 interface WorkerCardProps {
   worker: Worker;
+  settings?: AnalysisSettings;
 }
 
-export const WorkerCard: React.FC<WorkerCardProps> = ({ worker }) => {
+export const WorkerCard: React.FC<WorkerCardProps> = ({ worker, settings }) => {
   const isHelmetOK = Boolean(worker.helmet);
   const isVestOK = Boolean(worker.vest);
   const isCompliant = worker.status === 'COMPLIANT';
+
+  const isHelmetRequired = settings ? settings.require_helmet !== false : true;
+  const isVestRequired = settings ? settings.require_vest !== false : true;
 
   const helmetPercent = isHelmetOK ? Math.round(worker.helmet_conf * 100) : 0;
   const vestPercent = isVestOK ? Math.round(worker.vest_conf * 100) : 0;
@@ -50,6 +54,11 @@ export const WorkerCard: React.FC<WorkerCardProps> = ({ worker }) => {
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                 <span className="text-emerald-400">OK ({helmetPercent}%)</span>
               </>
+            ) : !isHelmetRequired ? (
+              <>
+                <MinusCircle className="w-4 h-4 text-slate-500" />
+                <span className="text-slate-400">Not required</span>
+              </>
             ) : (
               <>
                 <XCircle className="w-4 h-4 text-rose-400" />
@@ -70,6 +79,11 @@ export const WorkerCard: React.FC<WorkerCardProps> = ({ worker }) => {
               <>
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                 <span className="text-emerald-400">OK ({vestPercent}%)</span>
+              </>
+            ) : !isVestRequired ? (
+              <>
+                <MinusCircle className="w-4 h-4 text-slate-500" />
+                <span className="text-slate-400">Not required</span>
               </>
             ) : (
               <>

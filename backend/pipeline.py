@@ -3,13 +3,21 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-# 1. Config constants
-PERSON_CONF = 0.40
-PPE_CONF = 0.25          # model-level, low on purpose
-DECISION_CONF = 0.30     # minimum confidence for a positive PPE class to count
+# 1. Config constants (Defaults)
+DEFAULT_PERSON_CONF = 0.40
+DEFAULT_PPE_CONF = 0.25          # model-level, low on purpose
+DEFAULT_DECISION_CONF = 0.30     # minimum confidence for a positive PPE class to count
 HELMET_KEYS = ["hardhat", "helmet"]
 VEST_KEYS = ["vest"]
 MAX_IMAGE_DIM = 1600
+
+DEFAULT_SETTINGS = {
+    "require_helmet": True,
+    "require_vest": True,
+    "person_conf": DEFAULT_PERSON_CONF,
+    "ppe_conf": DEFAULT_PPE_CONF,
+    "decision_conf": DEFAULT_DECISION_CONF
+}
 
 # Load both models ONCE at module level
 PERSON_MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "yolov8n.pt")
@@ -49,9 +57,9 @@ def classify_class(cls_name: str):
     return cat, is_neg
 
 
-# 3. Function detect_workers(img_bgr)
-def detect_workers(img_bgr):
-    results = person_model(img_bgr, classes=[0], conf=PERSON_CONF, verbose=False)[0]
+# 3. Function detect_workers(img_bgr, person_conf)
+def detect_workers(img_bgr, person_conf=DEFAULT_PERSON_CONF):
+    results = person_model(img_bgr, classes=[0], conf=person_conf, verbose=False)[0]
     boxes = []
     if results.boxes is not None:
         for b in results.boxes:
@@ -62,8 +70,8 @@ def detect_workers(img_bgr):
     return boxes
 
 
-# 4. Function check_ppe(img_bgr, box)
-def check_ppe(img_bgr, box):
+# 4. Function check_ppe(img_bgr, box, ppe_conf, decision_conf)
+def check_ppe(img_bgr, box, ppe_conf=DEFAULT_PPE_CONF, decision_conf=DEFAULT_DECISION_CONF):
     img_h, img_w = img_bgr.shape[:2]
     x1, y1, x2, y2 = box
     w = x2 - x1
@@ -84,7 +92,7 @@ def check_ppe(img_bgr, box):
     if crop.size == 0:
         return {"helmet": False, "vest": False, "helmet_conf": 0.0, "vest_conf": 0.0}
 
-    ppe_results = ppe_model(crop, conf=PPE_CONF, verbose=False)[0]
+    ppe_results = ppe_model(crop, conf=ppe_conf, verbose=False)[0]
     
     helmet_pos_confs = []
     helmet_neg_confs = []
@@ -124,11 +132,11 @@ def check_ppe(img_bgr, box):
 
     pos_h_conf = max(helmet_pos_confs) if helmet_pos_confs else 0.0
     neg_h_conf = max(helmet_neg_confs) if helmet_neg_confs else 0.0
-    helmet_ok = (pos_h_conf >= DECISION_CONF) and (pos_h_conf > neg_h_conf)
+    helmet_ok = (pos_h_conf >= decision_conf) and (pos_h_conf > neg_h_conf)
 
     pos_v_conf = max(vest_pos_confs) if vest_pos_confs else 0.0
     neg_v_conf = max(vest_neg_confs) if vest_neg_confs else 0.0
-    vest_ok = (pos_v_conf >= DECISION_CONF) and (pos_v_conf > neg_v_conf)
+    vest_ok = (pos_v_conf >= decision_conf) and (pos_v_conf > neg_v_conf)
 
     return {
         "helmet": helmet_ok,
@@ -138,31 +146,45 @@ def check_ppe(img_bgr, box):
     }
 
 
-# 5. Function evaluate(helmet, vest)
-def evaluate(helmet: bool, vest: bool):
+# 5. Function evaluate(helmet, vest, require_helmet, require_vest)
+def evaluate(helmet: bool, vest: bool, require_helmet: bool = True, require_vest: bool = True):
     missing = []
-    if not helmet:
+    if require_helmet and not helmet:
         missing.append("Helmet")
-    if not vest:
+    if require_vest and not vest:
         missing.append("Vest")
     
-    status = "COMPLIANT" if (helmet and vest) else "NON-COMPLIANT"
+    status = "COMPLIANT" if len(missing) == 0 else "NON-COMPLIANT"
     return status, missing
 
 
-# 6. Function analyze_image(img_bgr)
-def analyze_image(img_bgr):
+# 6. Function analyze_image(img_bgr, settings)
+def analyze_image(img_bgr, settings: dict = None):
+    if settings is None:
+        settings = DEFAULT_SETTINGS
+        
+    person_conf = float(settings.get("person_conf", DEFAULT_PERSON_CONF))
+    ppe_conf = float(settings.get("ppe_conf", DEFAULT_PPE_CONF))
+    decision_conf = float(settings.get("decision_conf", DEFAULT_DECISION_CONF))
+    require_helmet = bool(settings.get("require_helmet", True))
+    require_vest = bool(settings.get("require_vest", True))
+
     # Downscale if image longest side exceeds MAX_IMAGE_DIM
     img_bgr = resize_if_large(img_bgr, MAX_IMAGE_DIM)
     
-    boxes = detect_workers(img_bgr)
+    boxes = detect_workers(img_bgr, person_conf=person_conf)
     workers = []
     compliant_count = 0
     violation_count = 0
     
     for idx, box in enumerate(boxes, start=1):
-        ppe_info = check_ppe(img_bgr, box)
-        status, missing = evaluate(ppe_info["helmet"], ppe_info["vest"])
+        ppe_info = check_ppe(img_bgr, box, ppe_conf=ppe_conf, decision_conf=decision_conf)
+        status, missing = evaluate(
+            ppe_info["helmet"],
+            ppe_info["vest"],
+            require_helmet=require_helmet,
+            require_vest=require_vest
+        )
         
         if status == "COMPLIANT":
             compliant_count += 1
@@ -185,6 +207,13 @@ def analyze_image(img_bgr):
         "compliant": compliant_count,
         "violations": violation_count,
         "workers": workers,
+        "settings": {
+            "require_helmet": require_helmet,
+            "require_vest": require_vest,
+            "person_conf": person_conf,
+            "ppe_conf": ppe_conf,
+            "decision_conf": decision_conf
+        },
         "processed_img": img_bgr
     }
 

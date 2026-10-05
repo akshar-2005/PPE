@@ -9,6 +9,14 @@ export interface Worker {
   missing: string[];
 }
 
+export interface AnalysisSettings {
+  require_helmet: boolean;
+  require_vest: boolean;
+  person_conf: number;
+  ppe_conf: number;
+  decision_conf: number;
+}
+
 export interface AnalysisResult {
   id: string;
   filename: string;
@@ -17,6 +25,7 @@ export interface AnalysisResult {
   compliant: number;
   violations: number;
   workers: Worker[];
+  settings?: AnalysisSettings;
   image_url: string;
 }
 

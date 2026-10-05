@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, ShieldCheck, AlertOctagon, ExternalLink, Maximize2 } from 'lucide-react';
+import { Users, ShieldCheck, AlertOctagon, ExternalLink, Maximize2, Sliders } from 'lucide-react';
 import type { AnalysisResult } from '../types';
 import { StatCard } from './StatCard';
 import { StatusBanner } from './StatusBanner';
@@ -47,6 +47,25 @@ export const ResultView: React.FC<ResultViewProps> = ({ result }) => {
 
       {/* Overall Status Banner */}
       <StatusBanner total={result.total} violations={result.violations} />
+
+      {/* Audit Settings Line Under Banner */}
+      {result.settings && (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400">
+          <div className="flex items-center gap-2">
+            <Sliders className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span>
+              <strong className="text-slate-300">Mandated Equipment:</strong>{' '}
+              {result.settings.require_helmet ? 'Hardhat (Required)' : 'Hardhat (Optional)'} •{' '}
+              {result.settings.require_vest ? 'Safety Vest (Required)' : 'Safety Vest (Optional)'}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 text-slate-400 font-mono text-[11px]">
+            <span>Person Conf: {result.settings.person_conf.toFixed(2)}</span>
+            <span>PPE Conf: {result.settings.ppe_conf.toFixed(2)}</span>
+            <span>Decision: {result.settings.decision_conf.toFixed(2)}</span>
+          </div>
+        </div>
+      )}
 
       {/* Annotated Image & Breakdown Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -106,7 +125,11 @@ export const ResultView: React.FC<ResultViewProps> = ({ result }) => {
               </div>
             ) : (
               result.workers.map((worker) => (
-                <WorkerCard key={worker.id} worker={worker} />
+                <WorkerCard
+                  key={worker.id}
+                  worker={worker}
+                  settings={result.settings}
+                />
               ))
             )}
           </div>
