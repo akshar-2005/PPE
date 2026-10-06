@@ -14,17 +14,20 @@ MAX_IMAGE_DIM = 1600
 DEFAULT_SETTINGS = {
     "require_helmet": True,
     "require_vest": True,
+    "require_mask": False,
     "person_conf": DEFAULT_PERSON_CONF,
     "ppe_conf": DEFAULT_PPE_CONF,
     "decision_conf": DEFAULT_DECISION_CONF
 }
 
-# Load both models ONCE at module level
+# Load models ONCE at module level
 PERSON_MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "yolov8n.pt")
 PPE_MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "ppe.pt")
+MASK_MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "mask.pt")
 
 person_model = YOLO(PERSON_MODEL_PATH)
 ppe_model = YOLO(PPE_MODEL_PATH)
+mask_model = YOLO(MASK_MODEL_PATH)
 
 
 # Helper to downscale large images keeping aspect ratio
@@ -40,7 +43,7 @@ def resize_if_large(img_bgr, max_dim=MAX_IMAGE_DIM):
     return img_bgr
 
 
-# 2. Helper to classify a class name
+# 2. Helper to classify helmet/vest classes
 def classify_class(cls_name: str):
     clean = cls_name.lower().replace("-", " ").replace("_", " ").strip()
     is_neg = clean.startswith("no ") or clean.startswith("no_")
@@ -77,8 +80,9 @@ def check_ppe(img_bgr, box, ppe_conf=DEFAULT_PPE_CONF, decision_conf=DEFAULT_DEC
     w = x2 - x1
     h = y2 - y1
     person_h = max(1, h)
+    person_w = max(1, w)
 
-    # 5% padding clamped to image bounds
+    # 5% padding clamped to image bounds for worker crop
     pad_w = int(w * 0.05)
     pad_h = int(h * 0.05)
     
@@ -90,8 +94,16 @@ def check_ppe(img_bgr, box, ppe_conf=DEFAULT_PPE_CONF, decision_conf=DEFAULT_DEC
     crop = img_bgr[crop_y1:crop_y2, crop_x1:crop_x2]
     
     if crop.size == 0:
-        return {"helmet": False, "vest": False, "helmet_conf": 0.0, "vest_conf": 0.0}
+        return {
+            "helmet": False,
+            "vest": False,
+            "mask": False,
+            "helmet_conf": 0.0,
+            "vest_conf": 0.0,
+            "mask_conf": 0.0
+        }
 
+    # 1. Primary PPE model on worker crop for Helmet & Vest
     ppe_results = ppe_model(crop, conf=ppe_conf, verbose=False)[0]
     
     helmet_pos_confs = []
@@ -138,21 +150,60 @@ def check_ppe(img_bgr, box, ppe_conf=DEFAULT_PPE_CONF, decision_conf=DEFAULT_DEC
     neg_v_conf = max(vest_neg_confs) if vest_neg_confs else 0.0
     vest_ok = (pos_v_conf >= decision_conf) and (pos_v_conf > neg_v_conf)
 
+    # 2. Dedicated mask model on upscaled head crop (top 40% with padding, upscaled to >=640px)
+    head_y1 = max(0, y1 - int(person_h * 0.05))
+    head_y2 = min(img_h, y1 + int(person_h * 0.40))
+    head_x1 = max(0, x1 - int(person_w * 0.08))
+    head_x2 = min(img_w, x2 + int(person_w * 0.08))
+    head_crop = img_bgr[head_y1:head_y2, head_x1:head_x2]
+    
+    mask_pos_confs = []
+    mask_neg_confs = []
+
+    if head_crop.size > 0:
+        scale_head = 640.0 / max(head_crop.shape[:2])
+        head_up = cv2.resize(head_crop, (int(head_crop.shape[1] * scale_head), int(head_crop.shape[0] * scale_head)))
+        res_head_mask = mask_model(head_up, conf=0.05, verbose=False)[0]
+        if res_head_mask.boxes is not None:
+            for b in res_head_mask.boxes:
+                cls_id = int(b.cls[0].item())
+                cls_name = mask_model.names.get(cls_id, str(cls_id))
+                conf = float(b.conf[0].item())
+                if cls_name == "Mask":
+                    mask_pos_confs.append(conf)
+                elif cls_name == "NO-Mask":
+                    mask_neg_confs.append(conf)
+
+    pos_m_conf = max(mask_pos_confs) if mask_pos_confs else 0.0
+    neg_m_conf = max(mask_neg_confs) if mask_neg_confs else 0.0
+    mask_ok = (pos_m_conf >= decision_conf) and (pos_m_conf > neg_m_conf)
+
     return {
         "helmet": helmet_ok,
         "vest": vest_ok,
+        "mask": mask_ok,
         "helmet_conf": round(pos_h_conf, 3),
-        "vest_conf": round(pos_v_conf, 3)
+        "vest_conf": round(pos_v_conf, 3),
+        "mask_conf": round(pos_m_conf, 3)
     }
 
 
-# 5. Function evaluate(helmet, vest, require_helmet, require_vest)
-def evaluate(helmet: bool, vest: bool, require_helmet: bool = True, require_vest: bool = True):
+# 5. Function evaluate(helmet, vest, mask, ...)
+def evaluate(
+    helmet: bool,
+    vest: bool,
+    mask: bool = False,
+    require_helmet: bool = True,
+    require_vest: bool = True,
+    require_mask: bool = False
+):
     missing = []
     if require_helmet and not helmet:
         missing.append("Helmet")
     if require_vest and not vest:
         missing.append("Vest")
+    if require_mask and not mask:
+        missing.append("Mask")
     
     status = "COMPLIANT" if len(missing) == 0 else "NON-COMPLIANT"
     return status, missing
@@ -168,6 +219,7 @@ def analyze_image(img_bgr, settings: dict = None):
     decision_conf = float(settings.get("decision_conf", DEFAULT_DECISION_CONF))
     require_helmet = bool(settings.get("require_helmet", True))
     require_vest = bool(settings.get("require_vest", True))
+    require_mask = bool(settings.get("require_mask", False))
 
     # Downscale if image longest side exceeds MAX_IMAGE_DIM
     img_bgr = resize_if_large(img_bgr, MAX_IMAGE_DIM)
@@ -180,10 +232,12 @@ def analyze_image(img_bgr, settings: dict = None):
     for idx, box in enumerate(boxes, start=1):
         ppe_info = check_ppe(img_bgr, box, ppe_conf=ppe_conf, decision_conf=decision_conf)
         status, missing = evaluate(
-            ppe_info["helmet"],
-            ppe_info["vest"],
+            helmet=ppe_info["helmet"],
+            vest=ppe_info["vest"],
+            mask=ppe_info["mask"],
             require_helmet=require_helmet,
-            require_vest=require_vest
+            require_vest=require_vest,
+            require_mask=require_mask
         )
         
         if status == "COMPLIANT":
@@ -196,8 +250,10 @@ def analyze_image(img_bgr, settings: dict = None):
             "box": box,
             "helmet": ppe_info["helmet"],
             "vest": ppe_info["vest"],
+            "mask": ppe_info["mask"],
             "helmet_conf": ppe_info["helmet_conf"],
             "vest_conf": ppe_info["vest_conf"],
+            "mask_conf": ppe_info["mask_conf"],
             "status": status,
             "missing": missing
         })
@@ -210,6 +266,7 @@ def analyze_image(img_bgr, settings: dict = None):
         "settings": {
             "require_helmet": require_helmet,
             "require_vest": require_vest,
+            "require_mask": require_mask,
             "person_conf": person_conf,
             "ppe_conf": ppe_conf,
             "decision_conf": decision_conf
@@ -236,6 +293,11 @@ def annotate(img_bgr, result):
     cv2.rectangle(annotated, (10, 10), (20 + tw, 20 + th + baseline), banner_bg_color, -1)
     cv2.putText(annotated, banner_text, (15, 15 + th), font, font_scale * 1.1, (255, 255, 255), thickness, cv2.LINE_AA)
     
+    settings = result.get("settings", {})
+    req_h = settings.get("require_helmet", True)
+    req_v = settings.get("require_vest", True)
+    req_m = settings.get("require_mask", False)
+
     for worker in result["workers"]:
         x1, y1, x2, y2 = worker["box"]
         status = worker["status"]
@@ -244,14 +306,15 @@ def annotate(img_bgr, result):
         
         cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
         
-        h_text = f"Helmet OK ({worker['helmet_conf']:.2f})" if worker['helmet'] else "No Helmet"
-        v_text = f"Vest OK ({worker['vest_conf']:.2f})" if worker['vest'] else "No Vest"
+        lines = [f"Worker {worker['id']} ({status})"]
         
-        lines = [
-            f"Worker {worker['id']} ({status})",
-            h_text,
-            v_text
-        ]
+        # Show required items plus any detected items
+        if req_h or worker.get("helmet"):
+            lines.append(f"Helmet OK ({worker.get('helmet_conf', 0.0):.2f})" if worker.get("helmet") else "No Helmet")
+        if req_v or worker.get("vest"):
+            lines.append(f"Vest OK ({worker.get('vest_conf', 0.0):.2f})" if worker.get("vest") else "No Vest")
+        if req_m or worker.get("mask"):
+            lines.append(f"Mask OK ({worker.get('mask_conf', 0.0):.2f})" if worker.get("mask") else "No Mask")
         
         line_heights = []
         max_line_w = 0

@@ -1,5 +1,13 @@
 import React from 'react';
-import { CheckCircle2, XCircle, MinusCircle, HardHat, Shirt, AlertTriangle } from 'lucide-react';
+import {
+  CheckCircle2,
+  XCircle,
+  MinusCircle,
+  HardHat,
+  Shirt,
+  Smile,
+  AlertTriangle,
+} from 'lucide-react';
 import type { Worker, AnalysisSettings } from '../types';
 
 interface WorkerCardProps {
@@ -10,13 +18,19 @@ interface WorkerCardProps {
 export const WorkerCard: React.FC<WorkerCardProps> = ({ worker, settings }) => {
   const isHelmetOK = Boolean(worker.helmet);
   const isVestOK = Boolean(worker.vest);
+  const isMaskOK = Boolean(worker.mask);
+
   const isCompliant = worker.status === 'COMPLIANT';
 
   const isHelmetRequired = settings ? settings.require_helmet !== false : true;
   const isVestRequired = settings ? settings.require_vest !== false : true;
+  const isMaskRequired = settings ? Boolean(settings.require_mask) : false;
 
-  const helmetPercent = isHelmetOK ? Math.round(worker.helmet_conf * 100) : 0;
-  const vestPercent = isVestOK ? Math.round(worker.vest_conf * 100) : 0;
+  const showMask = isMaskRequired || worker.mask !== undefined;
+
+  const helmetPercent = isHelmetOK ? Math.round((worker.helmet_conf || 0) * 100) : 0;
+  const vestPercent = isVestOK ? Math.round((worker.vest_conf || 0) * 100) : 0;
+  const maskPercent = isMaskOK ? Math.round((worker.mask_conf || 0) * 100) : 0;
 
   return (
     <div
@@ -93,6 +107,34 @@ export const WorkerCard: React.FC<WorkerCardProps> = ({ worker, settings }) => {
             )}
           </div>
         </div>
+
+        {/* Mask Row */}
+        {showMask && (
+          <div className="flex items-center justify-between py-1">
+            <div className="flex items-center gap-2 text-slate-300">
+              <Smile className="w-4 h-4 text-slate-400" />
+              <span>Mask</span>
+            </div>
+            <div className="flex items-center gap-1.5 font-medium">
+              {isMaskOK ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span className="text-emerald-400">OK ({maskPercent}%)</span>
+                </>
+              ) : !isMaskRequired ? (
+                <>
+                  <MinusCircle className="w-4 h-4 text-slate-500" />
+                  <span className="text-slate-400">Not required</span>
+                </>
+              ) : (
+                <>
+                  <XCircle className="w-4 h-4 text-rose-400" />
+                  <span className="text-rose-400">Missing</span>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Missing Items Alert Banner */}

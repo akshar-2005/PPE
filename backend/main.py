@@ -29,6 +29,7 @@ os.makedirs(OUTPUTS_DIR, exist_ok=True)
 class SettingsModel(BaseModel):
     require_helmet: bool
     require_vest: bool
+    require_mask: bool = False
     person_conf: float
     ppe_conf: float
     decision_conf: float
@@ -97,11 +98,15 @@ def update_settings_endpoint(payload: SettingsModel):
             status_code=400,
             detail="decision_conf must be between 0.05 and 0.95"
         )
-    # 2. At least one of require_helmet or require_vest must be true
-    if not payload.require_helmet and not payload.require_vest:
+    # 2. At least one of the PPE items must be true
+    if not any([
+        payload.require_helmet,
+        payload.require_vest,
+        payload.require_mask
+    ]):
         raise HTTPException(
             status_code=400,
-            detail="At least one PPE item (require_helmet or require_vest) must be required."
+            detail="At least one PPE item must be required."
         )
 
     updated = save_settings(payload.model_dump())

@@ -4,6 +4,7 @@ import {
   Shield,
   HardHat,
   Shirt,
+  Smile,
   RotateCcw,
   Save,
   AlertTriangle,
@@ -61,6 +62,14 @@ export const SettingsPage: React.FC = () => {
     });
   };
 
+  const handleToggleMask = () => {
+    if (!formSettings) return;
+    setFormSettings({
+      ...formSettings,
+      require_mask: !formSettings.require_mask,
+    });
+  };
+
   const handleSliderChange = (
     key: 'person_conf' | 'ppe_conf' | 'decision_conf',
     value: number
@@ -73,14 +82,18 @@ export const SettingsPage: React.FC = () => {
   };
 
   const isInvalid = Boolean(
-    formSettings && !formSettings.require_helmet && !formSettings.require_vest
+    formSettings &&
+      !formSettings.require_helmet &&
+      !formSettings.require_vest &&
+      !formSettings.require_mask
   );
 
   const isUnchanged = Boolean(
     savedSettings &&
       formSettings &&
-      savedSettings.require_helmet === formSettings.require_helmet &&
-      savedSettings.require_vest === formSettings.require_vest &&
+      Boolean(savedSettings.require_helmet) === Boolean(formSettings.require_helmet) &&
+      Boolean(savedSettings.require_vest) === Boolean(formSettings.require_vest) &&
+      Boolean(savedSettings.require_mask) === Boolean(formSettings.require_mask) &&
       Math.abs(savedSettings.person_conf - formSettings.person_conf) < 0.001 &&
       Math.abs(savedSettings.ppe_conf - formSettings.ppe_conf) < 0.001 &&
       Math.abs(savedSettings.decision_conf - formSettings.decision_conf) < 0.001
@@ -220,7 +233,7 @@ export const SettingsPage: React.FC = () => {
           Select which items are mandatory on site. Workers missing a required item will trigger a violation. Unselected items will still be detected but will not cause compliance violations.
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
           {/* Hardhat / Helmet Toggle Card */}
           <div
             onClick={handleToggleHelmet}
@@ -249,12 +262,11 @@ export const SettingsPage: React.FC = () => {
                 <HardHat className="w-5 h-5" />
               </div>
               <div>
-                <p className="font-semibold text-sm text-slate-200">Hardhat / Helmet</p>
-                <p className="text-xs text-slate-400">Head protection mandate</p>
+                <p className="font-semibold text-sm text-slate-200">Hardhat</p>
+                <p className="text-xs text-slate-400">Head protection</p>
               </div>
             </div>
 
-            {/* Switch pill */}
             <div
               className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
                 formSettings.require_helmet ? 'bg-cyan-500' : 'bg-slate-800'
@@ -296,12 +308,11 @@ export const SettingsPage: React.FC = () => {
                 <Shirt className="w-5 h-5" />
               </div>
               <div>
-                <p className="font-semibold text-sm text-slate-200">High-Vis Safety Vest</p>
-                <p className="text-xs text-slate-400">Body visibility mandate</p>
+                <p className="font-semibold text-sm text-slate-200">Safety Vest</p>
+                <p className="text-xs text-slate-400">High-vis body wear</p>
               </div>
             </div>
 
-            {/* Switch pill */}
             <div
               className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
                 formSettings.require_vest ? 'bg-cyan-500' : 'bg-slate-800'
@@ -310,6 +321,52 @@ export const SettingsPage: React.FC = () => {
               <div
                 className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
                   formSettings.require_vest ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </div>
+          </div>
+
+          {/* Mask Toggle Card */}
+          <div
+            onClick={handleToggleMask}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === ' ' || e.key === 'Enter') {
+                e.preventDefault();
+                handleToggleMask();
+              }
+            }}
+            className={`p-4 rounded-xl border flex items-center justify-between cursor-pointer transition-all duration-200 select-none ${
+              formSettings.require_mask
+                ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300 shadow-sm'
+                : 'bg-slate-950/40 border-slate-800 hover:border-slate-700 text-slate-400'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <div
+                className={`p-2 rounded-lg ${
+                  formSettings.require_mask
+                    ? 'bg-cyan-500/20 text-cyan-400'
+                    : 'bg-slate-800 text-slate-500'
+                }`}
+              >
+                <Smile className="w-5 h-5" />
+              </div>
+              <div>
+                <p className="font-semibold text-sm text-slate-200">Mask</p>
+                <p className="text-xs text-slate-400">Respiratory protection</p>
+              </div>
+            </div>
+
+            <div
+              className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                formSettings.require_mask ? 'bg-cyan-500' : 'bg-slate-800'
+              }`}
+            >
+              <div
+                className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                  formSettings.require_mask ? 'translate-x-5' : 'translate-x-0'
                 }`}
               />
             </div>
@@ -324,7 +381,7 @@ export const SettingsPage: React.FC = () => {
           >
             <AlertTriangle className="w-4 h-4 shrink-0" />
             <span>
-              At least one PPE item (Helmet or Vest) must remain enabled to perform compliance audits.
+              At least one PPE item must remain enabled to perform compliance audits.
             </span>
           </div>
         )}

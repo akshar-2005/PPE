@@ -31,6 +31,7 @@ export function generateWorkerDetailsCsv(details: AnalysisResult[]): string {
     'worker_id',
     'helmet',
     'vest',
+    'mask',
     'status',
     'missing',
   ];
@@ -38,10 +39,15 @@ export function generateWorkerDetailsCsv(details: AnalysisResult[]): string {
   const rows: string[][] = [];
 
   details.forEach((record) => {
+    const reqHelmet = record.settings ? record.settings.require_helmet !== false : true;
+    const reqVest = record.settings ? record.settings.require_vest !== false : true;
+    const reqMask = record.settings ? Boolean(record.settings.require_mask) : false;
+
     if (record.workers && record.workers.length > 0) {
       record.workers.forEach((worker) => {
-        const helmetStr = worker.helmet ? 'Yes' : 'No';
-        const vestStr = worker.vest ? 'Yes' : 'No';
+        const helmetStr = worker.helmet ? 'Yes' : reqHelmet ? 'No' : 'Not required';
+        const vestStr = worker.vest ? 'Yes' : reqVest ? 'No' : 'Not required';
+        const maskStr = worker.mask ? 'Yes' : reqMask ? 'No' : 'Not required';
         const missingStr =
           worker.missing && worker.missing.length > 0 ? worker.missing.join('; ') : 'None';
 
@@ -52,6 +58,7 @@ export function generateWorkerDetailsCsv(details: AnalysisResult[]): string {
           escapeCsvCell(worker.id),
           escapeCsvCell(helmetStr),
           escapeCsvCell(vestStr),
+          escapeCsvCell(maskStr),
           escapeCsvCell(worker.status),
           escapeCsvCell(missingStr),
         ]);

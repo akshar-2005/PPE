@@ -12,7 +12,7 @@ import {
   FolderOpen,
   HardHat,
   Shirt,
-  ShieldAlert,
+  Smile,
   RefreshCw,
   Plus,
   CheckCircle2,
@@ -29,14 +29,20 @@ import {
 } from '../utils/csv';
 import { useToast } from '../context/ToastContext';
 
+interface ViolationCategory {
+  id: string;
+  label: string;
+  count: number;
+  pct: number;
+  icon: React.ComponentType<{ className?: string }>;
+  gradient: string;
+  badgeStyle: string;
+  iconStyle: string;
+}
+
 interface ViolationBreakdown {
-  helmetOnly: number;
-  vestOnly: number;
-  both: number;
+  categories: ViolationCategory[];
   totalViolations: number;
-  helmetOnlyPct: number;
-  vestOnlyPct: number;
-  bothPct: number;
 }
 
 export const Reports: React.FC = () => {
@@ -98,40 +104,69 @@ export const Reports: React.FC = () => {
 
   // Compute violation breakdown across all workers in all detailed records
   const breakdown: ViolationBreakdown = useMemo(() => {
-    let helmetOnly = 0;
-    let vestOnly = 0;
-    let both = 0;
+    let helmetCount = 0;
+    let vestCount = 0;
+    let maskCount = 0;
 
     detailedRecords.forEach((record) => {
       if (record.workers && record.workers.length > 0) {
         record.workers.forEach((w) => {
-          const hasHelmet = Boolean(w.helmet);
-          const hasVest = Boolean(w.vest);
-
-          if (!hasHelmet && !hasVest) {
-            both += 1;
-          } else if (!hasHelmet && hasVest) {
-            helmetOnly += 1;
-          } else if (hasHelmet && !hasVest) {
-            vestOnly += 1;
+          if (w.missing && w.missing.length > 0) {
+            w.missing.forEach((item) => {
+              const lower = item.toLowerCase();
+              if (lower.includes('helmet') || lower.includes('hardhat')) {
+                helmetCount += 1;
+              } else if (lower.includes('vest')) {
+                vestCount += 1;
+              } else if (lower.includes('mask')) {
+                maskCount += 1;
+              }
+            });
           }
         });
       }
     });
 
-    const totalViolations = helmetOnly + vestOnly + both;
-    const helmetOnlyPct = totalViolations > 0 ? Math.round((helmetOnly / totalViolations) * 100) : 0;
-    const vestOnlyPct = totalViolations > 0 ? Math.round((vestOnly / totalViolations) * 100) : 0;
-    const bothPct = totalViolations > 0 ? Math.round((both / totalViolations) * 100) : 0;
+    const totalViolations = helmetCount + vestCount + maskCount;
+
+    const rawCategories = [
+      {
+        id: 'helmet',
+        label: 'Missing Hardhat / Helmet',
+        count: helmetCount,
+        icon: HardHat,
+        gradient: 'from-amber-600 to-amber-400',
+        badgeStyle: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+        iconStyle: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+      },
+      {
+        id: 'vest',
+        label: 'Missing Safety Vest',
+        count: vestCount,
+        icon: Shirt,
+        gradient: 'from-orange-600 to-orange-400',
+        badgeStyle: 'bg-orange-500/10 text-orange-300 border-orange-500/20',
+        iconStyle: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+      },
+      {
+        id: 'mask',
+        label: 'Missing Mask',
+        count: maskCount,
+        icon: Smile,
+        gradient: 'from-teal-600 to-teal-400',
+        badgeStyle: 'bg-teal-500/10 text-teal-300 border-teal-500/20',
+        iconStyle: 'bg-teal-500/10 text-teal-400 border-teal-500/20',
+      },
+    ];
+
+    const categories: ViolationCategory[] = rawCategories.map((c) => ({
+      ...c,
+      pct: totalViolations > 0 ? Math.round((c.count / totalViolations) * 100) : 0,
+    }));
 
     return {
-      helmetOnly,
-      vestOnly,
-      both,
+      categories,
       totalViolations,
-      helmetOnlyPct,
-      vestOnlyPct,
-      bothPct,
     };
   }, [detailedRecords]);
 
@@ -352,82 +387,38 @@ export const Reports: React.FC = () => {
               <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center gap-3">
                 <CheckCircle2 className="w-5 h-5 shrink-0" />
                 <span className="text-sm font-medium">
-                  Zero violations detected! All inspected workers are 100% compliant with hardhat and safety vest guidelines.
+                  Zero violations detected! All inspected workers are 100% compliant with site safety guidelines.
                 </span>
               </div>
             ) : (
               <div className="space-y-4 pt-1">
-                {/* Bar 1: Missing Helmet Only */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 font-medium text-slate-200">
-                      <div className="p-1 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                        <HardHat className="w-3.5 h-3.5" />
+                {breakdown.categories.map((cat) => {
+                  const Icon = cat.icon;
+                  return (
+                    <div key={cat.id} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2 font-medium text-slate-200">
+                          <div className={`p-1 rounded-md border ${cat.iconStyle}`}>
+                            <Icon className="w-3.5 h-3.5" />
+                          </div>
+                          <span>{cat.label}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-200">{cat.count} worker{cat.count !== 1 ? 's' : ''}</span>
+                          <span className={`px-2 py-0.5 rounded-full font-semibold border text-[11px] ${cat.badgeStyle}`}>
+                            {cat.pct}%
+                          </span>
+                        </div>
                       </div>
-                      <span>Missing Helmet Only</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-200">{breakdown.helmetOnly} workers</span>
-                      <span className="px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 font-semibold border border-amber-500/20 text-[11px]">
-                        {breakdown.helmetOnlyPct}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="h-3.5 w-full bg-slate-950/80 rounded-full overflow-hidden p-0.5 border border-slate-800">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-amber-600 to-amber-400 transition-all duration-500 shadow-sm shadow-amber-500/20"
-                      style={{ width: `${Math.max(breakdown.helmetOnlyPct, breakdown.helmetOnly > 0 ? 3 : 0)}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Bar 2: Missing Vest Only */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 font-medium text-slate-200">
-                      <div className="p-1 rounded-md bg-orange-500/10 text-orange-400 border border-orange-500/20">
-                        <Shirt className="w-3.5 h-3.5" />
+                      <div className="h-3.5 w-full bg-slate-950/80 rounded-full overflow-hidden p-0.5 border border-slate-800">
+                        <div
+                          className={`h-full rounded-full bg-gradient-to-r ${cat.gradient} transition-all duration-500 shadow-sm`}
+                          style={{ width: `${Math.max(cat.pct, cat.count > 0 ? 3 : 0)}%` }}
+                        />
                       </div>
-                      <span>Missing Safety Vest Only</span>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-200">{breakdown.vestOnly} workers</span>
-                      <span className="px-2 py-0.5 rounded-full bg-orange-500/10 text-orange-300 font-semibold border border-orange-500/20 text-[11px]">
-                        {breakdown.vestOnlyPct}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="h-3.5 w-full bg-slate-950/80 rounded-full overflow-hidden p-0.5 border border-slate-800">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-orange-600 to-orange-400 transition-all duration-500 shadow-sm shadow-orange-500/20"
-                      style={{ width: `${Math.max(breakdown.vestOnlyPct, breakdown.vestOnly > 0 ? 3 : 0)}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Bar 3: Missing Both */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 font-medium text-slate-200">
-                      <div className="p-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                        <ShieldAlert className="w-3.5 h-3.5" />
-                      </div>
-                      <span>Missing Both (Helmet &amp; Vest)</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-200">{breakdown.both} workers</span>
-                      <span className="px-2 py-0.5 rounded-full bg-rose-500/10 text-rose-300 font-semibold border border-rose-500/20 text-[11px]">
-                        {breakdown.bothPct}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="h-3.5 w-full bg-slate-950/80 rounded-full overflow-hidden p-0.5 border border-slate-800">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-rose-600 to-rose-500 transition-all duration-500 shadow-sm shadow-rose-500/20"
-                      style={{ width: `${Math.max(breakdown.bothPct, breakdown.both > 0 ? 3 : 0)}%` }}
-                    />
-                  </div>
-                </div>
+                  );
+                })}
               </div>
             )}
           </div>

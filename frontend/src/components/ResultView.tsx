@@ -55,8 +55,13 @@ export const ResultView: React.FC<ResultViewProps> = ({ result }) => {
             <Sliders className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
             <span>
               <strong className="text-slate-300">Mandated Equipment:</strong>{' '}
-              {result.settings.require_helmet ? 'Hardhat (Required)' : 'Hardhat (Optional)'} •{' '}
-              {result.settings.require_vest ? 'Safety Vest (Required)' : 'Safety Vest (Optional)'}
+              {[
+                result.settings.require_helmet !== false ? 'Hardhat' : null,
+                result.settings.require_vest !== false ? 'Safety Vest' : null,
+                result.settings.require_mask ? 'Mask' : null,
+              ]
+                .filter(Boolean)
+                .join(', ') || 'None'}
             </span>
           </div>
           <div className="flex items-center gap-3 text-slate-400 font-mono text-[11px]">
@@ -138,3 +143,5 @@ export const ResultView: React.FC<ResultViewProps> = ({ result }) => {
     </div>
   );
 };
+
+export default ResultView;

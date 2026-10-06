@@ -3,8 +3,10 @@ export interface Worker {
   box: [number, number, number, number];
   helmet: boolean | number;
   vest: boolean | number;
+  mask?: boolean | number;
   helmet_conf: number;
   vest_conf: number;
+  mask_conf?: number;
   status: "COMPLIANT" | "NON-COMPLIANT";
   missing: string[];
 }
@@ -12,6 +14,7 @@ export interface Worker {
 export interface AnalysisSettings {
   require_helmet: boolean;
   require_vest: boolean;
+  require_mask?: boolean;
   person_conf: number;
   ppe_conf: number;
   decision_conf: number;
