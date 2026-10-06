@@ -283,65 +283,173 @@ def annotate(img_bgr, result):
     img_h, img_w = annotated.shape[:2]
     
     thickness = max(2, int(min(img_h, img_w) / 400))
-    font_scale = max(0.45, min(img_h, img_w) / 900.0)
     font = cv2.FONT_HERSHEY_SIMPLEX
-    
-    banner_text = f"Workers: {result['total']} | Safe: {result['compliant']} | Violations: {result['violations']}"
-    (tw, th), baseline = cv2.getTextSize(banner_text, font, font_scale * 1.1, thickness)
-    
-    banner_bg_color = (30, 30, 30)
-    cv2.rectangle(annotated, (10, 10), (20 + tw, 20 + th + baseline), banner_bg_color, -1)
-    cv2.putText(annotated, banner_text, (15, 15 + th), font, font_scale * 1.1, (255, 255, 255), thickness, cv2.LINE_AA)
+    base_font_scale = max(0.40, min(img_h, img_w) / 1150.0)
     
     settings = result.get("settings", {})
     req_h = settings.get("require_helmet", True)
     req_v = settings.get("require_vest", True)
     req_m = settings.get("require_mask", False)
+    
+    margin = 4
+    line_padding_x = 6
+    line_padding_y = 5
 
+    # Layout loop with font scale reduction if overlap cannot be resolved
+    blocks = []
+    font_scale = base_font_scale
+    for scale_step in range(4):
+        font_scale = base_font_scale * (0.92 ** scale_step)
+        spacing = int(font_scale * 6) + 4
+        
+        blocks = []
+        for worker in result["workers"]:
+            x1, y1, x2, y2 = worker["box"]
+            status = worker["status"]
+            color = (0, 200, 0) if status == "COMPLIANT" else (0, 0, 220)
+            
+            # Build lines: status on its own line so it is not clipped
+            lines = [
+                f"Worker {worker['id']}",
+                status
+            ]
+            if req_h or worker.get("helmet"):
+                lines.append(f"Helmet OK ({worker.get('helmet_conf', 0.0):.2f})" if worker.get("helmet") else "No Helmet")
+            if req_v or worker.get("vest"):
+                lines.append(f"Vest OK ({worker.get('vest_conf', 0.0):.2f})" if worker.get("vest") else "No Vest")
+            if req_m or worker.get("mask"):
+                lines.append(f"Mask OK ({worker.get('mask_conf', 0.0):.2f})" if worker.get("mask") else "No Mask")
+                
+            line_metrics = []
+            max_w = 0
+            for line in lines:
+                (lw, lh), b = cv2.getTextSize(line, font, font_scale, 1)
+                line_metrics.append((lw, lh, b))
+                if lw > max_w:
+                    max_w = lw
+                    
+            block_w = max_w + (line_padding_x * 2)
+            total_text_h = sum(m[1] for m in line_metrics)
+            block_h = total_text_h + (len(lines) - 1) * spacing + (line_padding_y * 2)
+            
+            # Placement rules:
+            # 1. If y2 + margin + block_h <= img_h: place BELOW box, top edge at y2 + margin
+            # 2. Otherwise: place INSIDE box at bottom, top edge at y2 - block_h - margin
+            if y2 + margin + block_h <= img_h:
+                label_top = y2 + margin
+            else:
+                label_top = y2 - block_h - margin
+                
+            # Rule 3: The label must never be above y1 + 70% of the box height
+            min_allowed_y = int(y1 + 0.70 * (y2 - y1))
+            if label_top < min_allowed_y:
+                label_top = min_allowed_y
+                
+            label_bottom = label_top + block_h
+            
+            # Align x to x1, clamped inside image
+            init_x1 = x1
+            init_x2 = init_x1 + block_w
+            if init_x2 > img_w - 2:
+                init_x2 = img_w - 2
+                init_x1 = max(2, init_x2 - block_w)
+                
+            blocks.append({
+                "worker": worker,
+                "lines": lines,
+                "line_metrics": line_metrics,
+                "spacing": spacing,
+                "color": color,
+                "w": block_w,
+                "h": block_h,
+                "x1": init_x1,
+                "y1": label_top,
+                "x2": init_x2,
+                "y2": label_bottom,
+                "box": [x1, y1, x2, y2]
+            })
+
+        # Overlap resolution: shift right block to the right until no overlap
+        resolved = True
+        for _ in range(10):
+            changed = False
+            for i in range(len(blocks)):
+                for j in range(i + 1, len(blocks)):
+                    b1 = blocks[i]
+                    b2 = blocks[j]
+                    
+                    overlap_x = not (b1["x2"] + 2 <= b2["x1"] or b2["x2"] + 2 <= b1["x1"])
+                    overlap_y = not (b1["y2"] + 2 <= b2["y1"] or b2["y2"] + 2 <= b1["y1"])
+                    
+                    if overlap_x and overlap_y:
+                        if b1["x1"] <= b2["x1"]:
+                            left_b, right_b = b1, b2
+                        else:
+                            left_b, right_b = b2, b1
+                            
+                        needed_x1 = left_b["x2"] + 4
+                        needed_x2 = needed_x1 + right_b["w"]
+                        if needed_x2 <= img_w - 2:
+                            right_b["x1"] = needed_x1
+                            right_b["x2"] = needed_x2
+                            changed = True
+                        else:
+                            needed_l_x2 = right_b["x1"] - 4
+                            needed_l_x1 = needed_l_x2 - left_b["w"]
+                            if needed_l_x1 >= 2:
+                                left_b["x1"] = needed_l_x1
+                                left_b["x2"] = needed_l_x2
+                                changed = True
+                            else:
+                                resolved = False
+            if not changed:
+                break
+                
+        if resolved or scale_step == 3:
+            break
+
+    # Verification: check that for every worker label_top >= y1 + 0.7*(y2 - y1)
+    for b in blocks:
+        x1, y1, x2, y2 = b["box"]
+        min_allowed_y = y1 + 0.70 * (y2 - y1)
+        b["x1"] = max(2, min(img_w - b["w"] - 2, b["x1"]))
+        b["x2"] = b["x1"] + b["w"]
+        b["y1"] = max(int(min_allowed_y), min(img_h - b["h"] - 2, b["y1"]))
+        b["y2"] = b["y1"] + b["h"]
+        assert b["y1"] >= min_allowed_y - 1, f"Worker {b['worker']['id']}: label_top ({b['y1']}) < y1 + 70% ({min_allowed_y})"
+
+    # 1. Top-left summary banner (Workers | Safe | Violations)
+    banner_font_scale = max(0.45, min(img_h, img_w) / 1000.0)
+    banner_text = f"Workers: {result['total']} | Safe: {result['compliant']} | Violations: {result['violations']}"
+    (tw, th), baseline = cv2.getTextSize(banner_text, font, banner_font_scale, thickness)
+    banner_bg_color = (30, 30, 30)
+    cv2.rectangle(annotated, (10, 10), (20 + tw, 20 + th + baseline), banner_bg_color, -1)
+    cv2.putText(annotated, banner_text, (15, 15 + th), font, banner_font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+    # 2. Draw worker bounding boxes
     for worker in result["workers"]:
         x1, y1, x2, y2 = worker["box"]
         status = worker["status"]
-        
-        color = (0, 220, 0) if status == "COMPLIANT" else (0, 0, 240)
-        
+        color = (0, 200, 0) if status == "COMPLIANT" else (0, 0, 220)
         cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
+
+    # 3. Draw label blocks and text
+    for b in blocks:
+        cv2.rectangle(annotated, (int(b["x1"]), int(b["y1"])), (int(b["x2"]), int(b["y2"])), b["color"], -1)
         
-        lines = [f"Worker {worker['id']} ({status})"]
-        
-        # Show required items plus any detected items
-        if req_h or worker.get("helmet"):
-            lines.append(f"Helmet OK ({worker.get('helmet_conf', 0.0):.2f})" if worker.get("helmet") else "No Helmet")
-        if req_v or worker.get("vest"):
-            lines.append(f"Vest OK ({worker.get('vest_conf', 0.0):.2f})" if worker.get("vest") else "No Vest")
-        if req_m or worker.get("mask"):
-            lines.append(f"Mask OK ({worker.get('mask_conf', 0.0):.2f})" if worker.get("mask") else "No Mask")
-        
-        line_heights = []
-        max_line_w = 0
-        for line in lines:
-            (lw, lh), _ = cv2.getTextSize(line, font, font_scale, 1)
-            line_heights.append(lh)
-            if lw > max_line_w:
-                max_line_w = lw
-                
-        total_block_h = sum(line_heights) + len(lines) * 6 + 6
-        
-        block_y2 = y1 - 4
-        block_y1 = block_y2 - total_block_h
-        if block_y1 < 0:
-            block_y1 = y1
-            block_y2 = block_y1 + total_block_h
-            
-        block_x1 = max(0, x1)
-        block_x2 = min(img_w, block_x1 + max_line_w + 10)
-        
-        cv2.rectangle(annotated, (block_x1, block_y1), (block_x2, block_y2), color, -1)
-        
-        curr_y = block_y1 + line_heights[0] + 3
-        for i, line in enumerate(lines):
-            text_color = (255, 255, 255)
-            cv2.putText(annotated, line, (block_x1 + 5, curr_y), font, font_scale, text_color, 1, cv2.LINE_AA)
-            if i < len(lines) - 1:
-                curr_y += line_heights[i + 1] + 6
+        curr_y = int(b["y1"] + line_padding_y + b["line_metrics"][0][1])
+        for idx, line in enumerate(b["lines"]):
+            cv2.putText(
+                annotated,
+                line,
+                (int(b["x1"] + line_padding_x), curr_y),
+                font,
+                font_scale,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA
+            )
+            if idx < len(b["lines"]) - 1:
+                curr_y += b["line_metrics"][idx + 1][1] + b["spacing"]
                 
     return annotated

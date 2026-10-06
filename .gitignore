@@ -11,6 +11,8 @@ frontend/dist/
 backend/history.db
 backend/outputs/*
 !backend/outputs/.gitkeep
+outputs/
+
 
 # OS / editor
 .DS_Store
