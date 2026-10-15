@@ -150,6 +150,16 @@ def sanitize(val):
         return {k: sanitize(v) for k, v in val.items()}
     return val
 
+@app.get("/")
+def root():
+    return {
+        "status": "online",
+        "service": "PPE Vision Safety API",
+        "docs_url": "/docs",
+        "health_url": "/health",
+        "dashboard_url": "http://localhost:5173"
+    }
+
 @app.get("/health")
 def health_check():
     return {"status": "online"}
