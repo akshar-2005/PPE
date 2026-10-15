@@ -1,177 +1,210 @@
 # PPE Vision Safety
 
-**PPE Vision Safety** is a real-time computer vision monitoring system designed to enforce Personal Protective Equipment compliance on industrial worksites.
-It automatically detects personnel using YOLO object detection, isolates individual workers, and verifies mandatory hardhat and safety vest compliance.
-The system provides a modern web dashboard for live inspection analysis, compliance metrics tracking, customizable rule configuration, and historical audit logging.
+PPE Vision Safety is an AI workplace safety monitoring system designed for industrial environments.
+It automatically detects every worker in an image, video, or near-real-time stream, isolates each person, and evaluates mandatory safety gear individually.
+Each detected worker is marked COMPLIANT or NON-COMPLIANT according to active site rules, with audit records and telemetry displayed on an administrative web dashboard.
 
 ---
 
-## 🌟 Key Features
+## Features
 
-- **Automated Worker & PPE Detection**: Detects persons and analyzes headgear (hardhats) and torso wear (safety vests).
-- **Per-Worker Region Filtering**: Crops worker regions and applies body-proportional spatial constraints (top 45% for helmets, 10%–75% for vests) to eliminate false detections from adjacent workers.
-- **Negative-Class Disambiguation**: Evaluates both positive (`Hardhat`, `Safety Vest`) and negative (`NO-Hardhat`, `NO-Safety Vest`) predictions for maximum accuracy.
-- **Configurable Settings**: Choose required PPE mandates (helmet and/or vest), adjust person, PPE, and decision confidence thresholds, with the active settings snapshot stored alongside each inspection.
-- **Reports & Exporting**: Dedicated Reports page with aggregate compliance stats, violation breakdown (missing helmet only, vest only, or both), full inspection log table, one-click CSV export of summary and worker details, and a clean print view.
-- **Real-Time API & Database Persistence**: Powered by FastAPI and SQLite to log inspection history, worker breakdown, configuration snapshots, and annotated images.
-- **Modern UI Features**: Executive React dashboard with live telemetry (`ONLINE`/`OFFLINE`), toast notifications, full-screen image viewer lightbox, responsive layout with mobile drawer navigation, and loading skeletons with animated counters.
+- Image analysis: Detects individual workers, verifies helmet and safety vest wear, and outputs annotated bounding boxes and gear badges.
+- Optional mask detection: Dedicated face mask verification on an upscaled head crop, disabled by default and configurable via Settings.
+- Video analysis: Samples frames, tracks workers across time using a motion-predicted tracker, aggregates per-worker gear compliance, and extracts annotated keyframes.
+- Settings: Configurable mandates for helmets, vests, and masks, alongside threshold sliders for person detection, PPE inference, and decision boundaries.
+- History and audit logging: Persistent SQLite records of past single-image and video inspections with worker breakdowns, configuration snapshots, and output media links.
+- Dashboard and reports: Overview metrics with compliance charts, detailed inspection tables, filterable violation summaries, CSV data export, and print-ready reports.
+- User interface: Dark executive design, responsive navigation, toast notifications, loading skeletons, and a full-screen image viewer.
+- Live monitoring with alerts: Near-real-time stream analysis supporting webcam input or client-side video file simulation, smoothed alerts requiring non-compliance across 3 of 5 observed frames, 30-second per-track cooldowns, audio beeps with mute control, and an alerts audit log.
 
 ---
 
-## 🏗️ System Architecture
+## Architecture
 
 ```text
-+------------------------+
-|   User Image Upload    |
-+-----------+------------+
++-----------------------+
+|   User Media Upload   |
++-----------+-----------+
             |
             v
-+------------------------+      HTTP POST      +------------------------+
-| React Dashboard (Vite) | ------------------> | FastAPI Backend Server |
-+------------------------+    multipart/file   +-----------+------------+
-                                                           |
-                                                           v
-                                               +------------------------+
-                                               | Person Model (YOLOv8n) |
-                                               +-----------+------------+
-                                                           |
-                                                           v
-                                               +------------------------+
-                                               |  Worker Crop Padding   |
-                                               +-----------+------------+
-                                                           |
-                                                           v
-                                               +------------------------+
-                                               |   PPE Model (ppe.pt)   |
-                                               +-----------+------------+
-                                                           |
-                                                           v
-                                               +------------------------+
-                                               |  Body-Region Filtering |
-                                               +-----------+------------+
-                                                           |
-                                                           v
-                                               +------------------------+
-                                               |   Compliance Rules     |
-                                               |  (Dynamic Settings)    |
-                                               +-----------+------------+
-                                                           |
-                                                           v
-+------------------------+      JSON Result    +------------------------+
-| Dashboard Visualizer   | <------------------ | Bounding Box Annotator |
-+------------------------+   + Image URL       +------------------------+
++-----------------------+      HTTP POST      +------------------------+
+| React Dashboard       | ------------------> | FastAPI Backend Server |
+| (Vite + TypeScript)   |   multipart/data    +-----------+------------+
++-----------------------+                                 |
+                                                          v
+                                              +------------------------+
+                                              | Person Detection       |
+                                              | (YOLOv8n)              |
+                                              +-----------+------------+
+                                                          |
+                                                          v
+                                              +------------------------+
+                                              | Worker Crop Padding    |
+                                              | (5% expansion)         |
+                                              +-----------+------------+
+                                                          |
+                                                          v
+                                              +------------------------+
+                                              | PPE Model (ppe.pt)     |
+                                              | + Mask Model (mask.pt) |
+                                              +-----------+------------+
+                                                          |
+                                                          v
+                                              +------------------------+
+                                              | Body-Region Filter &   |
+                                              | Compliance Logic       |
+                                              +-----------+------------+
+                                                          |
+                                                          v
++-----------------------+     JSON + Media    +------------------------+
+| Dashboard Visualizer  | <------------------ | Annotated Outputs &    |
+| & Live Alert Feed     |                     | Database Persistence   |
++-----------------------+                     +------------------------+
 ```
 
----
-
-## 🛠️ Technology Stack
-
-- **Computer Vision & AI**: Ultralytics YOLOv8 (`yolov8n.pt`, `ppe.pt`), OpenCV (`cv2`), PyTorch, NumPy
-- **Backend API**: Python 3, FastAPI, Uvicorn, SQLite3
-- **Frontend Dashboard**: React 18, TypeScript, Vite, TailwindCSS, React Router DOM v6, Lucide React Icons
+Video analysis path: Frame sampling at 4 fps -> motion-predicted IoU tracker -> per-worker temporal aggregation with a 60% presence rule -> annotated video render (avc1/mp4v) and keyframe extraction.
 
 ---
 
-## 🔍 How Per-Worker PPE Association Works
+## Models
 
-1. **Person Detection**: The primary YOLO model (`yolov8n.pt`) detects all workers in the image and orders them left-to-right by bounding box X-coordinates ($x_1$).
-2. **Dynamic Worker Cropping**: Each worker bounding box $[x_1, y_1, x_2, y_2]$ is expanded with a 5% margin (clamped to image boundaries) to capture edge gear.
-3. **Targeted PPE Detection**: The fine-tuned PPE model (`ppe.pt`) runs inference on the cropped worker image.
-4. **Body-Region Spatial Filtering**:
-   - **Helmet / Hardhat**: Center of detection must fall within the top 45% of the person box height ($-0.15 \le y_{rel} \le 0.45$).
-   - **Safety Vest**: Center of detection must fall between 10% and 75% of the person box height ($0.10 \le y_{rel} \le 0.75$).
-   - Detections outside these proportional body regions are discarded.
-5. **Confidence & Dynamic Compliance Evaluation**:
-   - $\text{Helmet Detected} = (\text{PosConf} \ge \text{decision\_conf}) \land (\text{PosConf} > \text{NegConf})$
-   - $\text{Vest Detected} = (\text{PosConf} \ge \text{decision\_conf}) \land (\text{PosConf} > \text{NegConf})$
-   - A worker is marked **COMPLIANT** if all *mandated* items (`require_helmet`, `require_vest`) are satisfied. Unmandated gear is detected and displayed without triggering violations.
+All models used in this repository are pretrained checkpoints created by third-party authors and were not trained by the authors of this project:
+
+- `models/yolov8n.pt`: YOLOv8 Nano object detection model pretrained on the COCO dataset by Ultralytics. Used solely for detecting the person class (Class 0).
+- `models/ppe.pt`: Fine-tuned YOLOv8 model for hardhat and safety vest detection on worker crops. Sourced from `huggingface.co/ayushgupta7777/safetyvision-yolov8` under the MIT License.
+- `models/mask.pt`: Fine-tuned YOLOv8 model for face mask detection on upscaled worker head crops. Sourced from `Hansung-Cho/yolov8-ppe-detection` on Hugging Face under the MIT License.
 
 ---
 
-## 🚀 Setup & Execution Instructions
+## How Per-Worker PPE Association Works
 
-### Option 1: One-Click Demo Launcher (Recommended)
-
-Simply double-click `start_demo.bat` in the project root. It will:
-1. Launch the FastAPI backend server on port `8000`.
-2. Launch the React frontend server on port `5173`.
-3. Open `http://localhost:5173` in your default web browser.
-
-To reset inspection history and output images, run `reset_demo.bat` (ensure backend is stopped).
+1. Person detection: The primary person model (`yolov8n.pt`) detects all individuals in the frame at `person_conf = 0.40`. Bounding boxes are sorted left-to-right.
+2. Worker cropping: Each worker bounding box is expanded by 5% padding in width and height (clamped strictly within image boundaries) to capture protective equipment worn near edges.
+3. PPE detection: The PPE model (`ppe.pt`) runs inference on the worker crop at `ppe_conf = 0.25`.
+4. Body-region spatial filtering: Detections are filtered based on their relative vertical center coordinate (`rel_y`) within the unpadded person bounding box:
+   - Helmet: Center must fall within the top 45% of the person box (`-0.15 <= rel_y <= 0.45`).
+   - Safety vest: Center must fall between 10% and 75% of the person box height (`0.10 <= rel_y <= 0.75`).
+   - Face mask (if enabled): A dedicated head crop (top 40% of the person with 5% vertical and 8% horizontal padding) is upscaled to 640 px and evaluated by `mask.pt`.
+5. Confidence disambiguation: A positive class prediction counts only if its confidence satisfies `positive_conf >= decision_conf` (default 0.30) and strictly exceeds the corresponding negative class confidence (`positive_conf > negative_conf`).
+6. Compliance evaluation: A worker is marked COMPLIANT only if every currently mandated gear item is satisfied. Unmandated gear is detected and rendered without triggering non-compliance violations.
 
 ---
 
-### Option 2: Manual Setup
+## Technology Stack
 
-#### 1. Backend Server
+- Python 3.12
+- FastAPI and Uvicorn
+- Ultralytics YOLOv8 and PyTorch
+- OpenCV (`cv2`)
+- SQLite3
+- React 19
+- TypeScript
+- Tailwind CSS
+- Vite
 
+---
+
+## Setup and Run
+
+Ensure Python 3.10+ and Node.js 18+ are installed. Verify that `backend/models/` contains `yolov8n.pt`, `ppe.pt`, and `mask.pt`.
+
+If any model weights are missing:
+- `yolov8n.pt`: Download from `https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8n.pt`
+- `ppe.pt`: Download from `https://huggingface.co/ayushgupta7777/safetyvision-yolov8/resolve/main/best.pt` and place as `backend/models/ppe.pt`
+- `mask.pt`: Download from `https://huggingface.co/Hansung-Cho/yolov8-ppe-detection/resolve/main/best.pt` and place as `backend/models/mask.pt`
+
+### Option 1: One-Click Launcher (Windows)
+Double-click `start_demo.bat` in the project root to start the backend, frontend, and browser dashboard.
+
+### Option 2: Manual Terminal Setup
+
+Backend:
 ```powershell
-# Navigate to backend
 cd backend
-
-# Create & activate virtual environment (Windows PowerShell)
 python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# Install requirements
+.\venv\Scripts\activate
 pip install -r requirements.txt
-
-# Start backend server
 uvicorn main:app --port 8000
 ```
 
-#### 2. Frontend Application
-
+Frontend:
 ```powershell
-# Navigate to frontend
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start Vite dev server
 npm run dev
 ```
 
+The frontend interface runs at `http://localhost:5173`, and the FastAPI backend runs at `http://127.0.0.1:8000`.
+
 ---
 
-## 📡 API Endpoints Reference
+## API Endpoints
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `GET` | `/health` | Server liveness check (`{"status": "online"}`) |
-| `POST` | `/analyze` | Accepts multipart image file (`file`), executes AI pipeline against current settings, saves annotated output, and returns JSON analysis |
-| `GET` | `/history` | Returns list of past analyses ordered newest first |
-| `GET` | `/history/{id}` | Returns full inspection record including detailed `workers` array and settings snapshot |
-| `GET` | `/stats` | Returns aggregate metrics (`total_analyses`, `total_workers`, `total_compliant`, `total_violations`, `compliance_rate`) |
-| `GET` | `/settings` | Returns active compliance thresholds and required PPE mandates (`require_helmet`, `require_vest`, `person_conf`, `ppe_conf`, `decision_conf`) |
-| `PUT` | `/settings` | Updates compliance thresholds (`0.05`–`0.95`) and required PPE mandates (validates at least one gear required) |
-| `POST` | `/settings/reset` | Resets configuration settings back to default factory values |
-| `GET` | `/outputs/{file}` | Serves annotated inspection images |
+| `GET` | `/` | Root endpoint displaying API status and links to documentation and frontend dashboard. |
+| `GET` | `/health` | Health check endpoint returning online status. |
+| `GET` | `/settings` | Retrieve active PPE mandates and detection confidence thresholds. |
+| `PUT` | `/settings` | Update PPE mandates and confidence thresholds with validation. |
+| `POST` | `/settings/reset` | Reset PPE mandates and thresholds to system default values. |
+| `POST` | `/analyze` | Analyze an uploaded image for worker detection, PPE verification, and compliance. |
+| `POST` | `/analyze-video` | Submit a video file for background frame sampling, worker tracking, and compliance. |
+| `GET` | `/jobs/{job_id}` | Poll background processing progress and retrieval status of a video analysis job. |
+| `GET` | `/video-history` | List all completed video analysis records ordered by date. |
+| `GET` | `/video-history/{analysis_id}` | Retrieve full details, tracked worker metrics, and keyframes for a video analysis. |
+| `GET` | `/history` | List all historical single-image analysis inspection records. |
+| `GET` | `/history/{analysis_id}` | Retrieve comprehensive inspection details, worker data, and annotated image URL. |
+| `GET` | `/stats` | Return aggregate inspection statistics including totals and overall compliance rate. |
+| `POST` | `/live/start` | Initialize a near-real-time live monitoring session with an isolated tracker instance. |
+| `POST` | `/live/frame` | Ingest a live image frame, perform tracking, verify PPE, and evaluate smoothing alert triggers. |
+| `POST` | `/live/stop` | Terminate an active live monitoring session and release associated tracker resources. |
+| `GET` | `/alerts` | List historical safety violation alerts with snapshot paths and timestamps (supports `limit`). |
+| `GET` | `/alerts/{alert_id}` | Retrieve a single safety alert record by its unique identifier. |
+| `POST` | `/alerts/clear` | Clear all stored safety violation alerts from the database and delete snapshot images from disk. |
 
 ---
 
-## 💳 Model Credits & Licensing
+## Testing
 
-- **Person Detection Model**: Official Ultralytics YOLOv8 Nano (`yolov8n.pt`)
-- **PPE Detection Model**: Pretrained YOLOv8 fine-tuned for workplace safety (`ppe.pt`)
-  - **Source Repository**: [`ayushgupta7777/safetyvision-yolov8`](https://huggingface.co/ayushgupta7777/safetyvision-yolov8)
-  - **License**: MIT License
+The project includes sample test images in `demo_images/` (`1_mixed.png`, `2_all_compliant.png`, `3_no_ppe.png`, etc.) for manual verification through the web dashboard.
+
+Automated helper and test scripts located in `backend/`:
+- `test_pipeline.py`: Runs image detection and PPE evaluation across `backend/test_images/` and outputs annotated images to `outputs/`.
+- `test_api.py`: Validates FastAPI image endpoints, upload mechanisms, and response schemas.
+- `evaluate_ppe.py`: Compares PPE detection predictions against local ground-truth annotations.
+- `evaluate_mask.py`: Evaluates precision and recall of the mask detection model on head crops.
+- `test_tracker.py`: Unit tests for the IoU tracker covering motion prediction, track ID stability, and crossing paths.
+- `test_video_flow.py`: End-to-end test of the asynchronous video analysis background worker and database logging.
+- `test_crossing_video.py`: Tests tracking continuity on pedestrian crossing test footage.
+- `test_phase14.py`: Integration test suite validating live session lifecycle, alert smoothing rules, 30-second cooldown enforcement, and inference latency.
 
 ---
 
-## ⚠️ Known Limitations
+## Known Limitations
 
-1. **Extreme Occlusions**: Severe lower-body or torso occlusions (e.g. workers behind heavy machinery) may block vest detection regions.
-2. **Lighting & Surface Glare**: Intense reflections or dark shadow environments may reduce detection confidence below the configured decision threshold.
-3. **Supported Gear**: Currently monitors **Hardhats** and **Safety Vests** (gloves, goggles, and boots are ignored in current compliance status rules).
+- Pretrained model accuracy: Models are pretrained on public datasets and lack a formal domain-specific accuracy benchmark; verification is based on local test image sets.
+- Mask evaluation scope: Mask detection precision and recall were evaluated on a small set of sample test images.
+- Environmental sensitivity: Poor lighting, specular reflections, camera distance, and partial body occlusions can cause missed or spurious detections.
+- Frame rate tracking: At lower sampling rates (2 to 4 fps), rapid worker movement or overlapping trajectories can result in track ID swaps.
+- Video container encoding: Rendered output videos default to the `mp4v` codec when `avc1` is unavailable on the host OpenCV installation; some browsers cannot play `mp4v` inline (use the Download button or inspect extracted keyframes).
+- CPU processing throughput: Near-real-time live monitoring latency depends on host CPU capability (~166 ms per frame for helmet and vest, ~1.05s per frame with mask verification active).
+- Unsupported protective equipment: Specialized gear such as safety gloves, protective goggles, hearing protection, and safety boots are not supported by the current models.
 
 ---
 
-## 🔮 Future Scope
+## Future Scope
 
-- **Expanded PPE Detection**: Support for safety goggles, work gloves, harnesses, and steel-toe boots.
-- **Live Video & CCTV Integration**: Real-time RTSP video stream analysis with automatic violation snapshot triggers.
-- **Alert Notifications**: Telegram / Email / Webhook instant alerts to site safety managers upon non-compliance.
-- **Role-Based Access Control**: Multi-tenant team roles and auditor authentication.
-- **Cloud & Edge Deployment**: Containerized Docker setup for AWS/GCP edge deployment.
+- Dedicated detection models for safety gloves and eye goggles trained on domain-specific datasets.
+- User authentication and role-based access control (RBAC) for safety officers and site administrators.
+- Cloud deployment and containerization utilizing Docker and Kubernetes.
+- Database migration from SQLite to PostgreSQL for multi-node deployments.
+- Formal accuracy and mean average precision (mAP) benchmarking across standardized industrial safety datasets.
+
+---
+
+## Credits and Licenses
+
+- Ultralytics YOLOv8 (`yolov8n.pt`): AGPL-3.0 License.
+- SafetyVision PPE Model (`ppe.pt`): Released under the MIT License by Ayush Gupta (`huggingface.co/ayushgupta7777/safetyvision-yolov8`).
+- PPE Mask Detection Model (`mask.pt`): Released under the MIT License by Hansung Cho (`huggingface.co/Hansung-Cho/yolov8-ppe-detection`).
+- Test footage: Warehouse pedestrian test clips from open-license computer vision repositories.
