@@ -96,6 +96,19 @@ def init_db():
             )
         """)
 
+        # 4. alerts table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alerts (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                track_id INTEGER NOT NULL,
+                missing_items TEXT NOT NULL,
+                snapshot_path TEXT NOT NULL,
+                message TEXT NOT NULL
+            )
+        """)
+
         conn.commit()
 
 def get_settings() -> dict:
@@ -332,4 +345,78 @@ def get_video_analysis_by_id(analysis_id: str):
         del d["keyframes_json"]
         del d["settings_json"]
         return d
+
+def save_alert(record: dict):
+    init_db()
+    created_at = record.get("created_at") or datetime.now(timezone.utc).isoformat()
+    missing_items_json = json.dumps(record.get("missing_items", []))
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO alerts (
+                id, created_at, session_id, track_id, missing_items, snapshot_path, message
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            record["id"],
+            created_at,
+            record["session_id"],
+            int(record["track_id"]),
+            missing_items_json,
+            record.get("snapshot_path", ""),
+            record.get("message", "")
+        ))
+        conn.commit()
+
+def list_alerts(limit: int = 50):
+    init_db()
+    with get_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, created_at, session_id, track_id, missing_items, snapshot_path, message
+            FROM alerts
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["missing_items"] = json.loads(d["missing_items"])
+            except Exception:
+                d["missing_items"] = [d["missing_items"]]
+            result.append(d)
+        return result
+
+def get_alert(alert_id: str):
+    init_db()
+    with get_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, created_at, session_id, track_id, missing_items, snapshot_path, message
+            FROM alerts
+            WHERE id = ?
+        """, (alert_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        try:
+            d["missing_items"] = json.loads(d["missing_items"])
+        except Exception:
+            d["missing_items"] = [d["missing_items"]]
+        return d
+
+def clear_alerts():
+    init_db()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT snapshot_path FROM alerts")
+        rows = cursor.fetchall()
+        snapshot_paths = [r[0] for r in rows if r[0]]
+        cursor.execute("DELETE FROM alerts")
+        conn.commit()
+    return snapshot_paths
 

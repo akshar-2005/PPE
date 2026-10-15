@@ -101,3 +101,31 @@ export interface JobStatusResponse {
   message: string;
   result?: VideoAnalysisResult;
 }
+
+export interface LiveWorker {
+  track_id: number;
+  status: "COMPLIANT" | "NON-COMPLIANT";
+  missing: string[];
+  box: [number, number, number, number];
+}
+
+export interface LiveAlert {
+  id: string;
+  created_at: string;
+  session_id: string;
+  track_id: number;
+  missing_items: string[];
+  snapshot_path: string;
+  message: string;
+}
+
+export interface LiveFrameResponse {
+  total: number;
+  compliant: number;
+  violations: number;
+  workers: LiveWorker[];
+  annotated_image: string;
+  new_alerts: LiveAlert[];
+  processing_ms: number;
+}
+

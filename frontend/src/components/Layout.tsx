@@ -10,6 +10,8 @@ import {
   Settings,
   Menu,
   X,
+  Camera,
+  Bell,
 } from 'lucide-react';
 import { API_BASE } from '../config';
 
@@ -37,6 +39,12 @@ export const Layout: React.FC = () => {
     if (location.pathname === '/' || location.pathname === '/dashboard') {
       return 'Dashboard Overview';
     }
+    if (location.pathname === '/live') {
+      return 'Live Near-Real-Time Monitor';
+    }
+    if (location.pathname === '/alerts') {
+      return 'Safety Violation Alerts';
+    }
     if (location.pathname === '/analysis') {
       return 'Image Analysis';
     }
@@ -58,6 +66,12 @@ export const Layout: React.FC = () => {
   const getDocumentTitle = () => {
     if (location.pathname === '/' || location.pathname === '/dashboard') {
       return 'Dashboard';
+    }
+    if (location.pathname === '/live') {
+      return 'Live Monitor';
+    }
+    if (location.pathname === '/alerts') {
+      return 'Alerts';
     }
     if (location.pathname === '/analysis') {
       return 'Image Analysis';
@@ -89,6 +103,8 @@ export const Layout: React.FC = () => {
 
   const navItems = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { to: '/live', label: 'Live Monitor', icon: Camera },
+    { to: '/alerts', label: 'Alerts', icon: Bell },
     { to: '/analysis', label: 'Image Analysis', icon: ScanLine },
     { to: '/video', label: 'Video Analysis', icon: Video },
     { to: '/history', label: 'History', icon: HistoryIcon },

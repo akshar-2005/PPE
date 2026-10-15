@@ -3,10 +3,14 @@ import uuid
 import cv2
 import numpy as np
 import traceback
+import base64
+import collections
+import time
+import threading
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -22,14 +26,50 @@ from database import (
     reset_settings,
     save_video_analysis,
     list_video_analyses,
-    get_video_analysis_by_id
+    get_video_analysis_by_id,
+    save_alert,
+    list_alerts,
+    get_alert,
+    clear_alerts
 )
-from pipeline import analyze_image, annotate
+from pipeline import (
+    analyze_image,
+    annotate,
+    detect_workers,
+    check_ppe,
+    evaluate,
+    draw_worker_label
+)
+from tracker import IoUTracker
 from video_pipeline import analyze_video
-import threading
 
 OUTPUTS_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
+ALERTS_DIR = os.path.join(OUTPUTS_DIR, "alerts")
+os.makedirs(ALERTS_DIR, exist_ok=True)
+
+# Live monitoring sessions
+class LiveSession:
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self.tracker = IoUTracker(iou_threshold=0.3, lenient_iou_threshold=0.2, max_lost=5)
+        self.last_activity = time.time()
+        # track_id -> deque of status strings (maxlen=5)
+        self.track_history: dict[int, collections.deque] = {}
+        # track_id -> float (last alert timestamp)
+        self.track_last_alert_time: dict[int, float] = {}
+        # track_id -> frozenset of missing items
+        self.track_last_alert_missing: dict[int, frozenset] = {}
+
+live_sessions: dict[str, LiveSession] = {}
+live_sessions_lock = threading.Lock()
+
+def clean_idle_sessions():
+    now = time.time()
+    with live_sessions_lock:
+        to_del = [sid for sid, s in live_sessions.items() if now - s.last_activity > 120]
+        for sid in to_del:
+            del live_sessions[sid]
 
 # Video background job tracking
 video_jobs: dict = {}
@@ -414,3 +454,246 @@ def history_detail_endpoint(request: Request, analysis_id: str):
 @app.get("/stats")
 def stats_endpoint():
     return get_stats()
+
+# =====================================================================
+# Phase 14: Near-Real-Time Live Monitoring & Alerts
+# =====================================================================
+
+@app.post("/live/start")
+def live_start_endpoint():
+    clean_idle_sessions()
+    session_id = uuid.uuid4().hex[:12]
+    with live_sessions_lock:
+        live_sessions[session_id] = LiveSession(session_id)
+    return {"session_id": session_id}
+
+@app.post("/live/frame")
+def live_frame_endpoint(
+    request: Request,
+    session_id: str = Form(...),
+    file: UploadFile = File(...)
+):
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="Missing frame file")
+    
+    try:
+        content = file.file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty frame")
+        nparr = np.frombuffer(content, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise HTTPException(status_code=400, detail="Could not decode frame image")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read image frame: {str(e)}")
+
+    clean_idle_sessions()
+    with live_sessions_lock:
+        session = live_sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Live session not found or expired")
+
+    try:
+        start_time = time.perf_counter()
+        session.last_activity = time.time()
+
+        # Downscale to at most 960 px on the longest side
+        h, w = img.shape[:2]
+        max_dim = max(h, w)
+        if max_dim > 960:
+            scale = 960.0 / float(max_dim)
+            new_w = max(1, int(round(w * scale)))
+            new_h = max(1, int(round(h * scale)))
+            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+        # Get current settings
+        settings = get_settings()
+        person_conf = float(settings.get("person_conf", 0.40))
+        ppe_conf = float(settings.get("ppe_conf", 0.25))
+        decision_conf = float(settings.get("decision_conf", 0.30))
+        require_helmet = bool(settings.get("require_helmet", True))
+        require_vest = bool(settings.get("require_vest", True))
+        require_mask = bool(settings.get("require_mask", False))
+
+        # Detect workers
+        boxes = detect_workers(img, person_conf=person_conf)
+
+        # Assign track ids with session tracker
+        tracked = session.tracker.update(boxes)
+
+        annotated = img.copy()
+        workers = []
+        worker_eval_list = []
+        compliant_count = 0
+        violations_count = 0
+
+        # Evaluate compliance for each tracked worker
+        for item in tracked:
+            track_id = item["track_id"]
+            box = item["box"]
+
+            # Per-worker PPE check (slower mask check only when require_mask is True)
+            ppe_info = check_ppe(
+                img,
+                box,
+                ppe_conf=ppe_conf,
+                decision_conf=decision_conf,
+                check_mask=require_mask
+            )
+            status, missing = evaluate(
+                helmet=ppe_info["helmet"],
+                vest=ppe_info["vest"],
+                mask=ppe_info["mask"],
+                require_helmet=require_helmet,
+                require_vest=require_vest,
+                require_mask=require_mask
+            )
+
+            if status == "COMPLIANT":
+                compliant_count += 1
+            else:
+                violations_count += 1
+
+            w_dict = {
+                "track_id": track_id,
+                "status": status,
+                "missing": missing,
+                "box": box
+            }
+            workers.append(w_dict)
+            worker_eval_list.append((track_id, box, status, missing, ppe_info))
+
+            # Draw worker label on annotated frame (use draw_worker_label, label text "Worker <track_id>")
+            color = (0, 200, 0) if status == "COMPLIANT" else (0, 0, 220)
+            lines = [f"Worker {track_id}", status]
+            if require_helmet or ppe_info.get("helmet"):
+                lines.append(f"Helmet OK ({ppe_info.get('helmet_conf', 0.0):.2f})" if ppe_info.get("helmet") else "No Helmet")
+            if require_vest or ppe_info.get("vest"):
+                lines.append(f"Vest OK ({ppe_info.get('vest_conf', 0.0):.2f})" if ppe_info.get("vest") else "No Vest")
+            if require_mask or ppe_info.get("mask"):
+                lines.append(f"Mask OK ({ppe_info.get('mask_conf', 0.0):.2f})" if ppe_info.get("mask") else "No Mask")
+
+            draw_worker_label(annotated, box, lines, color)
+
+        # Alert evaluation: smoothing rule
+        # A worker track raises an alert when it was NON-COMPLIANT in at least 3 of its last 5 observed frames.
+        # Raise it once per track and per missing-item set, then apply a 30-second cooldown for that track.
+        new_alerts = []
+        for track_id, box, status, missing, ppe_info in worker_eval_list:
+            if track_id not in session.track_history:
+                session.track_history[track_id] = collections.deque(maxlen=5)
+            session.track_history[track_id].append(status)
+
+            nc_count = sum(1 for s in session.track_history[track_id] if s == "NON-COMPLIANT")
+            if nc_count >= 3 and status == "NON-COMPLIANT" and missing:
+                now = time.time()
+                last_time = session.track_last_alert_time.get(track_id, 0.0)
+                curr_missing_set = frozenset(missing)
+
+                if now - last_time >= 30.0:
+                    session.track_last_alert_time[track_id] = now
+                    session.track_last_alert_missing[track_id] = curr_missing_set
+
+                    alert_id = uuid.uuid4().hex[:8]
+                    msg = f"Worker {track_id} missing {', '.join(missing)}"
+                    created_at = datetime.now(timezone.utc).isoformat()
+                    snapshot_filename = f"{alert_id}.jpg"
+                    snapshot_file_path = os.path.join(ALERTS_DIR, snapshot_filename)
+                    cv2.imwrite(snapshot_file_path, annotated)
+
+                    snapshot_path = f"/outputs/alerts/{snapshot_filename}"
+                    alert_rec = {
+                        "id": alert_id,
+                        "created_at": created_at,
+                        "session_id": session_id,
+                        "track_id": track_id,
+                        "missing_items": missing,
+                        "snapshot_path": snapshot_path,
+                        "message": msg
+                    }
+                    save_alert(alert_rec)
+                    new_alerts.append(alert_rec)
+
+        # Base64 JPEG data URL for annotated image
+        encode_ok, buf = cv2.imencode('.jpg', annotated, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+        if encode_ok:
+            b64_str = base64.b64encode(buf).decode('utf-8')
+            data_url = f"data:image/jpeg;base64,{b64_str}"
+        else:
+            data_url = ""
+
+        processing_ms = round((time.perf_counter() - start_time) * 1000, 1)
+
+        return {
+            "total": len(workers),
+            "compliant": compliant_count,
+            "violations": violations_count,
+            "workers": sanitize(workers),
+            "annotated_image": data_url,
+            "new_alerts": sanitize(new_alerts),
+            "processing_ms": processing_ms
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Frame analysis failed")
+
+@app.post("/live/stop")
+async def live_stop_endpoint(request: Request):
+    sid = request.query_params.get("session_id")
+    if not sid:
+        content_type = request.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                body = await request.json()
+                sid = body.get("session_id")
+            except Exception:
+                pass
+        elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+            try:
+                form = await request.form()
+                sid = form.get("session_id")
+            except Exception:
+                pass
+    clean_idle_sessions()
+    with live_sessions_lock:
+        if sid and sid in live_sessions:
+            del live_sessions[sid]
+    return {"status": "stopped", "session_id": sid}
+
+@app.get("/alerts")
+def get_alerts_endpoint(limit: int = 50):
+    return list_alerts(limit=limit)
+
+@app.get("/alerts/{alert_id}")
+def get_alert_by_id_endpoint(alert_id: str):
+    alert = get_alert(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return alert
+
+@app.post("/alerts/clear")
+def clear_alerts_endpoint():
+    snapshot_paths = clear_alerts()
+    deleted_files = 0
+    for sp in snapshot_paths:
+        clean = sp.lstrip("/").replace("outputs/", "", 1)
+        fp = os.path.join(OUTPUTS_DIR, clean)
+        if os.path.exists(fp):
+            try:
+                os.remove(fp)
+                deleted_files += 1
+            except Exception:
+                pass
+    if os.path.exists(ALERTS_DIR):
+        for f in os.listdir(ALERTS_DIR):
+            if f.endswith(".jpg"):
+                try:
+                    os.remove(os.path.join(ALERTS_DIR, f))
+                except Exception:
+                    pass
+    return {"status": "cleared", "deleted_alerts": len(snapshot_paths), "deleted_files": deleted_files}
+
