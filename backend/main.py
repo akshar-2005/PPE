@@ -20,11 +20,90 @@ from database import (
     get_settings,
     save_settings,
     reset_settings,
+    save_video_analysis,
+    list_video_analyses,
+    get_video_analysis_by_id
 )
 from pipeline import analyze_image, annotate
+from video_pipeline import analyze_video
+import threading
 
 OUTPUTS_DIR = os.path.join(os.path.dirname(__file__), "outputs")
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
+
+# Video background job tracking
+video_jobs: dict = {}
+video_job_lock = threading.Lock()
+current_active_job_id = None
+
+ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm"}
+MAX_VIDEO_SIZE = 50 * 1024 * 1024 # 50 MB
+
+def run_video_job(job_id: str, input_path: str, filename: str, settings: dict, base_url: str):
+    global current_active_job_id
+    try:
+        def progress_cb(pct: int, msg: str):
+            if job_id in video_jobs:
+                video_jobs[job_id]["progress"] = pct
+                video_jobs[job_id]["message"] = msg
+
+        out_video_name = f"{job_id}.mp4"
+        out_video_path = os.path.join(OUTPUTS_DIR, out_video_name)
+
+        progress_cb(5, "Starting video analysis...")
+        raw_res = analyze_video(
+            video_path=input_path,
+            output_video_path=out_video_path,
+            output_dir=OUTPUTS_DIR,
+            video_id=job_id,
+            settings=settings,
+            progress_callback=progress_cb
+        )
+
+        created_at = datetime.now(timezone.utc).isoformat()
+        video_url = f"{base_url}/outputs/{out_video_name}"
+        keyframe_urls = [f"{base_url}/outputs/{kf}" for kf in raw_res["keyframe_filenames"]]
+
+        final_res = {
+            "id": job_id,
+            "filename": filename,
+            "created_at": created_at,
+            "duration_seconds": raw_res["duration_seconds"],
+            "frames_analyzed": raw_res["frames_analyzed"],
+            "total_video_frames": raw_res.get("total_video_frames", raw_res["frames_analyzed"]),
+            "truncated": raw_res["truncated"],
+            "unique_workers": raw_res["unique_workers"],
+            "compliant": raw_res["compliant"],
+            "violations": raw_res["violations"],
+            "workers": sanitize(raw_res["workers"]),
+            "video_url": video_url,
+            "video_codec": raw_res["video_codec"],
+            "keyframes": keyframe_urls,
+            "settings": sanitize(settings)
+        }
+
+        # Save to database
+        save_video_analysis(final_res)
+
+        video_jobs[job_id]["status"] = "done"
+        video_jobs[job_id]["progress"] = 100
+        video_jobs[job_id]["message"] = "Video analysis complete!"
+        video_jobs[job_id]["result"] = final_res
+
+    except Exception as e:
+        traceback.print_exc()
+        if job_id in video_jobs:
+            video_jobs[job_id]["status"] = "failed"
+            video_jobs[job_id]["message"] = f"Analysis failed: {str(e)}"
+    finally:
+        with video_job_lock:
+            current_active_job_id = None
+        # Clean up temporary uploaded file if distinct from output
+        if os.path.exists(input_path) and not input_path.endswith(f"{job_id}.mp4"):
+            try:
+                os.remove(input_path)
+            except Exception:
+                pass
 
 class SettingsModel(BaseModel):
     require_helmet: bool
@@ -81,8 +160,6 @@ def get_settings_endpoint():
 
 @app.put("/settings")
 def update_settings_endpoint(payload: SettingsModel):
-    # Validation rules:
-    # 1. person_conf, ppe_conf and decision_conf between 0.05 and 0.95
     if not (0.05 <= payload.person_conf <= 0.95):
         raise HTTPException(
             status_code=400,
@@ -98,7 +175,6 @@ def update_settings_endpoint(payload: SettingsModel):
             status_code=400,
             detail="decision_conf must be between 0.05 and 0.95"
         )
-    # 2. At least one of the PPE items must be true
     if not any([
         payload.require_helmet,
         payload.require_vest,
@@ -143,7 +219,6 @@ def analyze_endpoint(request: Request, file: UploadFile = File(...)):
     if img_bgr is None or img_bgr.size == 0:
         raise HTTPException(status_code=400, detail="Could not decode image file or corrupted file.")
 
-    # Load current settings for this analysis
     current_settings = get_settings()
 
     try:
@@ -189,6 +264,104 @@ def analyze_endpoint(request: Request, file: UploadFile = File(...)):
         "settings": sanitized_settings,
         "image_url": image_url
     }
+
+@app.post("/analyze-video")
+def analyze_video_endpoint(request: Request, file: UploadFile = File(...)):
+    global current_active_job_id
+    if not file or not file.filename:
+        raise HTTPException(status_code=400, detail="No video file uploaded.")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_VIDEO_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid video format '{ext}'. Allowed formats: {', '.join(sorted(ALLOWED_VIDEO_EXTENSIONS))}"
+        )
+
+    file_bytes = file.file.read()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded video file is empty.")
+
+    if len(file_bytes) > MAX_VIDEO_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Video size exceeds maximum limit of 50 MB (Got {len(file_bytes) / (1024*1024):.2f} MB)."
+        )
+
+    with video_job_lock:
+        if current_active_job_id is not None:
+            active_job = video_jobs.get(current_active_job_id)
+            if active_job and active_job.get("status") in ["queued", "processing"]:
+                raise HTTPException(
+                    status_code=429,
+                    detail="Another video analysis job is currently running. Please wait for it to complete."
+                )
+
+        job_id = uuid.uuid4().hex[:8]
+        current_active_job_id = job_id
+        video_jobs[job_id] = {
+            "status": "queued",
+            "progress": 0,
+            "message": "Video queued for processing...",
+            "result": None
+        }
+
+    # Save uploaded bytes to temporary file for analysis
+    temp_input_path = os.path.join(OUTPUTS_DIR, f"{job_id}_input{ext}")
+    try:
+        with open(temp_input_path, "wb") as f:
+            f.write(file_bytes)
+    except Exception as e:
+        with video_job_lock:
+            current_active_job_id = None
+        raise HTTPException(status_code=500, detail=f"Failed to save uploaded video: {str(e)}")
+
+    current_settings = get_settings()
+    base_url = str(request.base_url).rstrip("/")
+
+    # Launch processing in a background worker thread
+    worker_thread = threading.Thread(
+        target=run_video_job,
+        args=(job_id, temp_input_path, file.filename, current_settings, base_url),
+        daemon=True
+    )
+    worker_thread.start()
+
+    return {"job_id": job_id}
+
+@app.get("/jobs/{job_id}")
+def get_job_status_endpoint(job_id: str):
+    if job_id in video_jobs:
+        job = video_jobs[job_id]
+        return {
+            "status": job["status"],
+            "progress": job["progress"],
+            "message": job["message"],
+            "result": job.get("result")
+        }
+
+    # Fallback to database if server restarted or job purged from memory
+    db_record = get_video_analysis_by_id(job_id)
+    if db_record:
+        return {
+            "status": "done",
+            "progress": 100,
+            "message": "Video analysis complete!",
+            "result": db_record
+        }
+
+    raise HTTPException(status_code=404, detail="Job not found.")
+
+@app.get("/video-history")
+def video_history_list_endpoint():
+    return list_video_analyses()
+
+@app.get("/video-history/{analysis_id}")
+def video_history_detail_endpoint(analysis_id: str):
+    record = get_video_analysis_by_id(analysis_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Video analysis record not found.")
+    return record
 
 @app.get("/history")
 def history_list_endpoint(request: Request):

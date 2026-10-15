@@ -75,6 +75,27 @@ def init_db():
                 DEFAULT_SETTINGS["decision_conf"]
             ))
             
+        # 3. video_analyses table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS video_analyses (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                duration_seconds REAL NOT NULL,
+                frames_analyzed INTEGER NOT NULL,
+                total_video_frames INTEGER NOT NULL,
+                truncated INTEGER NOT NULL,
+                unique_workers INTEGER NOT NULL,
+                compliant INTEGER NOT NULL,
+                violations INTEGER NOT NULL,
+                workers_json TEXT NOT NULL,
+                video_url TEXT NOT NULL,
+                video_codec TEXT NOT NULL,
+                keyframes_json TEXT NOT NULL,
+                settings_json TEXT NOT NULL
+            )
+        """)
+
         conn.commit()
 
 def get_settings() -> dict:
@@ -227,3 +248,88 @@ def get_stats():
             "total_violations": int(total_violations),
             "compliance_rate": float(compliance_rate)
         }
+
+def save_video_analysis(record: dict):
+    init_db()
+    created_at = record.get("created_at") or datetime.now(timezone.utc).isoformat()
+    workers_json = json.dumps(record.get("workers", []))
+    keyframes_json = json.dumps(record.get("keyframes", []))
+    settings_json = json.dumps(record.get("settings", {}))
+    
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO video_analyses (
+                id, created_at, filename, duration_seconds, frames_analyzed,
+                total_video_frames, truncated, unique_workers, compliant,
+                violations, workers_json, video_url, video_codec,
+                keyframes_json, settings_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            record["id"],
+            created_at,
+            record["filename"],
+            float(record["duration_seconds"]),
+            int(record["frames_analyzed"]),
+            int(record.get("total_video_frames", record["frames_analyzed"])),
+            1 if record.get("truncated") else 0,
+            int(record["unique_workers"]),
+            int(record["compliant"]),
+            int(record["violations"]),
+            workers_json,
+            record.get("video_url", ""),
+            record.get("video_codec", "mp4v"),
+            keyframes_json,
+            settings_json
+        ))
+        conn.commit()
+
+def list_video_analyses():
+    init_db()
+    with get_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, created_at, filename, duration_seconds, frames_analyzed,
+                   total_video_frames, truncated, unique_workers, compliant, violations,
+                   video_url, video_codec, keyframes_json, settings_json
+            FROM video_analyses
+            ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["truncated"] = bool(d["truncated"])
+            d["keyframes"] = json.loads(d["keyframes_json"]) if d.get("keyframes_json") else []
+            d["settings"] = json.loads(d["settings_json"]) if d.get("settings_json") else {}
+            del d["keyframes_json"]
+            del d["settings_json"]
+            result.append(d)
+        return result
+
+def get_video_analysis_by_id(analysis_id: str):
+    init_db()
+    with get_connection() as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, created_at, filename, duration_seconds, frames_analyzed,
+                   total_video_frames, truncated, unique_workers, compliant, violations,
+                   workers_json, video_url, video_codec, keyframes_json, settings_json
+            FROM video_analyses
+            WHERE id = ?
+        """, (analysis_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["truncated"] = bool(d["truncated"])
+        d["workers"] = json.loads(d["workers_json"]) if d.get("workers_json") else []
+        d["keyframes"] = json.loads(d["keyframes_json"]) if d.get("keyframes_json") else []
+        d["settings"] = json.loads(d["settings_json"]) if d.get("settings_json") else {}
+        del d["workers_json"]
+        del d["keyframes_json"]
+        del d["settings_json"]
+        return d
+

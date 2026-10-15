@@ -74,7 +74,7 @@ def detect_workers(img_bgr, person_conf=DEFAULT_PERSON_CONF):
 
 
 # 4. Function check_ppe(img_bgr, box, ppe_conf, decision_conf)
-def check_ppe(img_bgr, box, ppe_conf=DEFAULT_PPE_CONF, decision_conf=DEFAULT_DECISION_CONF):
+def check_ppe(img_bgr, box, ppe_conf=DEFAULT_PPE_CONF, decision_conf=DEFAULT_DECISION_CONF, check_mask=True):
     img_h, img_w = img_bgr.shape[:2]
     x1, y1, x2, y2 = box
     w = x2 - x1
@@ -151,32 +151,37 @@ def check_ppe(img_bgr, box, ppe_conf=DEFAULT_PPE_CONF, decision_conf=DEFAULT_DEC
     vest_ok = (pos_v_conf >= decision_conf) and (pos_v_conf > neg_v_conf)
 
     # 2. Dedicated mask model on upscaled head crop (top 40% with padding, upscaled to >=640px)
-    head_y1 = max(0, y1 - int(person_h * 0.05))
-    head_y2 = min(img_h, y1 + int(person_h * 0.40))
-    head_x1 = max(0, x1 - int(person_w * 0.08))
-    head_x2 = min(img_w, x2 + int(person_w * 0.08))
-    head_crop = img_bgr[head_y1:head_y2, head_x1:head_x2]
-    
-    mask_pos_confs = []
-    mask_neg_confs = []
+    pos_m_conf = 0.0
+    neg_m_conf = 0.0
+    mask_ok = False
 
-    if head_crop.size > 0:
-        scale_head = 640.0 / max(head_crop.shape[:2])
-        head_up = cv2.resize(head_crop, (int(head_crop.shape[1] * scale_head), int(head_crop.shape[0] * scale_head)))
-        res_head_mask = mask_model(head_up, conf=0.05, verbose=False)[0]
-        if res_head_mask.boxes is not None:
-            for b in res_head_mask.boxes:
-                cls_id = int(b.cls[0].item())
-                cls_name = mask_model.names.get(cls_id, str(cls_id))
-                conf = float(b.conf[0].item())
-                if cls_name == "Mask":
-                    mask_pos_confs.append(conf)
-                elif cls_name == "NO-Mask":
-                    mask_neg_confs.append(conf)
+    if check_mask:
+        head_y1 = max(0, y1 - int(person_h * 0.05))
+        head_y2 = min(img_h, y1 + int(person_h * 0.40))
+        head_x1 = max(0, x1 - int(person_w * 0.08))
+        head_x2 = min(img_w, x2 + int(person_w * 0.08))
+        head_crop = img_bgr[head_y1:head_y2, head_x1:head_x2]
+        
+        mask_pos_confs = []
+        mask_neg_confs = []
 
-    pos_m_conf = max(mask_pos_confs) if mask_pos_confs else 0.0
-    neg_m_conf = max(mask_neg_confs) if mask_neg_confs else 0.0
-    mask_ok = (pos_m_conf >= decision_conf) and (pos_m_conf > neg_m_conf)
+        if head_crop.size > 0:
+            scale_head = 640.0 / max(head_crop.shape[:2])
+            head_up = cv2.resize(head_crop, (int(head_crop.shape[1] * scale_head), int(head_crop.shape[0] * scale_head)))
+            res_head_mask = mask_model(head_up, conf=0.05, verbose=False)[0]
+            if res_head_mask.boxes is not None:
+                for b in res_head_mask.boxes:
+                    cls_id = int(b.cls[0].item())
+                    cls_name = mask_model.names.get(cls_id, str(cls_id))
+                    conf = float(b.conf[0].item())
+                    if cls_name == "Mask":
+                        mask_pos_confs.append(conf)
+                    elif cls_name == "NO-Mask":
+                        mask_neg_confs.append(conf)
+
+        pos_m_conf = max(mask_pos_confs) if mask_pos_confs else 0.0
+        neg_m_conf = max(mask_neg_confs) if mask_neg_confs else 0.0
+        mask_ok = (pos_m_conf >= decision_conf) and (pos_m_conf > neg_m_conf)
 
     return {
         "helmet": helmet_ok,
@@ -275,7 +280,83 @@ def analyze_image(img_bgr, settings: dict = None):
     }
 
 
-# 7. Function annotate(img_bgr, result)
+# 7. Shared helper to draw a single worker label & box
+def draw_worker_label(img, box, lines, color, block_rect=None, font_scale=None, thickness=None, margin=4, line_padding_x=6, line_padding_y=5):
+    img_h, img_w = img.shape[:2]
+    x1, y1, x2, y2 = box
+    if thickness is None:
+        thickness = max(2, int(min(img_h, img_w) / 400))
+    if font_scale is None:
+        font_scale = max(0.40, min(img_h, img_w) / 1150.0)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    
+    # 1. Draw bounding box outline
+    cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+    
+    # 2. Text metrics
+    spacing = int(font_scale * 6) + 4
+    line_metrics = []
+    max_w = 0
+    for line in lines:
+        (lw, lh), b = cv2.getTextSize(line, font, font_scale, 1)
+        line_metrics.append((lw, lh, b))
+        if lw > max_w:
+            max_w = lw
+            
+    block_w = max_w + (line_padding_x * 2)
+    total_text_h = sum(m[1] for m in line_metrics)
+    block_h = total_text_h + (len(lines) - 1) * spacing + (line_padding_y * 2)
+    
+    if block_rect is not None:
+        bx1, by1, bx2, by2 = block_rect
+    else:
+        # Placement rules:
+        # 1. If y2 + margin + block_h <= img_h: place BELOW box, top edge at y2 + margin
+        # 2. Otherwise: place INSIDE box at bottom, top edge at y2 - block_h - margin
+        if y2 + margin + block_h <= img_h:
+            by1 = y2 + margin
+        else:
+            by1 = y2 - block_h - margin
+            
+        # Rule 3: The label must never be above y1 + 70% of the box height
+        min_allowed_y = int(y1 + 0.70 * (y2 - y1))
+        if by1 < min_allowed_y:
+            by1 = min_allowed_y
+            
+        by2 = by1 + block_h
+        bx1 = x1
+        bx2 = bx1 + block_w
+        if bx2 > img_w - 2:
+            bx2 = img_w - 2
+            bx1 = max(2, bx2 - block_w)
+            
+    # Clamp strictly inside image
+    bx1 = max(2, min(img_w - block_w - 2, bx1))
+    bx2 = bx1 + block_w
+    by1 = max(2, min(img_h - block_h - 2, by1))
+    by2 = by1 + block_h
+    
+    # Solid background rectangle
+    cv2.rectangle(img, (int(bx1), int(by1)), (int(bx2), int(by2)), color, -1)
+    
+    # White text line by line
+    curr_y = int(by1 + line_padding_y + line_metrics[0][1])
+    for idx, line in enumerate(lines):
+        cv2.putText(
+            img,
+            line,
+            (int(bx1 + line_padding_x), curr_y),
+            font,
+            font_scale,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA
+        )
+        if idx < len(lines) - 1:
+            curr_y += line_metrics[idx + 1][1] + spacing
+
+
+# 8. Function annotate(img_bgr, result)
 def annotate(img_bgr, result):
     # Use the processed (downscaled) image if provided in result
     target_img = result.get("processed_img", img_bgr)
@@ -426,30 +507,16 @@ def annotate(img_bgr, result):
     cv2.rectangle(annotated, (10, 10), (20 + tw, 20 + th + baseline), banner_bg_color, -1)
     cv2.putText(annotated, banner_text, (15, 15 + th), font, banner_font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
 
-    # 2. Draw worker bounding boxes
-    for worker in result["workers"]:
-        x1, y1, x2, y2 = worker["box"]
-        status = worker["status"]
-        color = (0, 200, 0) if status == "COMPLIANT" else (0, 0, 220)
-        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, thickness)
-
-    # 3. Draw label blocks and text
+    # 2. Draw worker bounding boxes and label blocks using draw_worker_label
     for b in blocks:
-        cv2.rectangle(annotated, (int(b["x1"]), int(b["y1"])), (int(b["x2"]), int(b["y2"])), b["color"], -1)
-        
-        curr_y = int(b["y1"] + line_padding_y + b["line_metrics"][0][1])
-        for idx, line in enumerate(b["lines"]):
-            cv2.putText(
-                annotated,
-                line,
-                (int(b["x1"] + line_padding_x), curr_y),
-                font,
-                font_scale,
-                (255, 255, 255),
-                1,
-                cv2.LINE_AA
-            )
-            if idx < len(b["lines"]) - 1:
-                curr_y += b["line_metrics"][idx + 1][1] + b["spacing"]
+        draw_worker_label(
+            annotated,
+            b["box"],
+            b["lines"],
+            b["color"],
+            block_rect=(b["x1"], b["y1"], b["x2"], b["y2"]),
+            font_scale=font_scale,
+            thickness=thickness
+        )
                 
     return annotated

@@ -4,6 +4,7 @@ import {
   ShieldCheck,
   LayoutDashboard,
   ScanLine,
+  Video,
   History as HistoryIcon,
   FileBarChart,
   Settings,
@@ -39,6 +40,9 @@ export const Layout: React.FC = () => {
     if (location.pathname === '/analysis') {
       return 'Image Analysis';
     }
+    if (location.pathname === '/video') {
+      return 'Video File Analysis';
+    }
     if (location.pathname.startsWith('/history')) {
       return location.pathname === '/history' ? 'Analysis History' : 'Analysis Record Detail';
     }
@@ -57,6 +61,9 @@ export const Layout: React.FC = () => {
     }
     if (location.pathname === '/analysis') {
       return 'Image Analysis';
+    }
+    if (location.pathname === '/video') {
+      return 'Video Analysis';
     }
     if (location.pathname.startsWith('/history')) {
       return location.pathname === '/history' ? 'History' : 'History Detail';
@@ -83,6 +90,7 @@ export const Layout: React.FC = () => {
   const navItems = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { to: '/analysis', label: 'Image Analysis', icon: ScanLine },
+    { to: '/video', label: 'Video Analysis', icon: Video },
     { to: '/history', label: 'History', icon: HistoryIcon },
     { to: '/reports', label: 'Reports', icon: FileBarChart },
     { to: '/settings', label: 'Settings', icon: Settings },

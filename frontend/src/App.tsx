@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
 import { ImageAnalysis } from './pages/ImageAnalysis';
+import { VideoAnalysis } from './pages/VideoAnalysis';
 import { HistoryPage } from './pages/History';
 import { HistoryDetail } from './pages/HistoryDetail';
 import { Reports } from './pages/Reports';
@@ -20,6 +21,7 @@ export function App() {
               <Route index element={<Dashboard />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="analysis" element={<ImageAnalysis />} />
+              <Route path="video" element={<VideoAnalysis />} />
               <Route path="history" element={<HistoryPage />} />
               <Route path="history/:id" element={<HistoryDetail />} />
               <Route path="reports" element={<Reports />} />
