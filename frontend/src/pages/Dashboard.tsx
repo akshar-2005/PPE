@@ -226,6 +226,7 @@ export const Dashboard: React.FC = () => {
                       >
                         <div className="flex items-center gap-3 overflow-hidden">
                           <img
+                            crossOrigin="use-credentials"
                             src={item.image_url}
                             alt={item.filename}
                             className="w-12 h-12 object-cover rounded-lg border border-slate-800 shrink-0"

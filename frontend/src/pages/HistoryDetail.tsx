@@ -131,9 +131,20 @@ export const HistoryDetail: React.FC = () => {
           </Link>
           <div>
             <h3 className="text-xl font-bold text-slate-100">{result.filename}</h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Record ID: <span className="font-mono text-cyan-400">{result.id}</span> • Timestamp:{' '}
-              {formatDate(result.created_at)}
+            <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>
+                Record ID: <span className="font-mono text-cyan-400">{result.id}</span>
+              </span>
+              <span>•</span>
+              <span>Timestamp: {formatDate(result.created_at)}</span>
+              {result.analyzed_by && (
+                <>
+                  <span>•</span>
+                  <span>
+                    Analyzed by <strong className="text-cyan-400 font-semibold">{result.analyzed_by}</strong>
+                  </span>
+                </>
+              )}
             </p>
           </div>
         </div>

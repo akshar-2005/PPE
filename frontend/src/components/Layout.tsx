@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
   ShieldCheck,
@@ -12,13 +12,37 @@ import {
   X,
   Camera,
   Bell,
+  Users as UsersIcon,
+  ChevronDown,
+  LogOut,
+  KeyRound,
+  Loader2,
+  AlertCircle,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { API_BASE } from '../config';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 export const Layout: React.FC = () => {
   const [isOnline, setIsOnline] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState<boolean>(false);
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState<boolean>(false);
+
+  // Change password modal state
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState<string | null>(null);
+
+  const { user, logout } = useAuth();
+  const { showToast } = useToast();
   const location = useLocation();
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   const checkHealth = async () => {
     try {
@@ -33,6 +57,17 @@ export const Layout: React.FC = () => {
     checkHealth();
     const interval = setInterval(checkHealth, 10000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Close user dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const getPageTitle = () => {
@@ -59,6 +94,9 @@ export const Layout: React.FC = () => {
     }
     if (location.pathname === '/settings') {
       return 'System Settings';
+    }
+    if (location.pathname === '/users') {
+      return 'User Management';
     }
     return 'PPE Safety Monitoring';
   };
@@ -88,6 +126,9 @@ export const Layout: React.FC = () => {
     if (location.pathname === '/settings') {
       return 'Settings';
     }
+    if (location.pathname === '/users') {
+      return 'Users';
+    }
     return 'PPE Safety';
   };
 
@@ -110,7 +151,61 @@ export const Layout: React.FC = () => {
     { to: '/history', label: 'History', icon: HistoryIcon },
     { to: '/reports', label: 'Reports', icon: FileBarChart },
     { to: '/settings', label: 'Settings', icon: Settings },
+    ...(user?.role === 'admin' ? [{ to: '/users', label: 'Users', icon: UsersIcon }] : []),
   ];
+
+  const handleChangePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setChangePasswordError(null);
+
+    if (!currentPassword) {
+      setChangePasswordError('Please enter your current password.');
+      return;
+    }
+    if (newPassword.length < 8) {
+      setChangePasswordError('New password must be at least 8 characters long.');
+      return;
+    }
+
+    try {
+      setChangePasswordLoading(true);
+      const res = await fetch(`${API_BASE}/auth/change-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+        credentials: 'include',
+      });
+
+      if (!res.ok) {
+        let msg = 'Failed to change password.';
+        try {
+          const data = await res.json();
+          if (data.detail) msg = data.detail;
+        } catch {
+          // fallback
+        }
+        setChangePasswordError(msg);
+        return;
+      }
+
+      showToast({
+        type: 'success',
+        message: 'Your password has been changed successfully.',
+        title: 'Password Updated',
+      });
+
+      setIsChangePasswordOpen(false);
+      setCurrentPassword('');
+      setNewPassword('');
+    } catch {
+      setChangePasswordError('Network error while updating password.');
+    } finally {
+      setChangePasswordLoading(false);
+    }
+  };
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden">
@@ -208,10 +303,10 @@ export const Layout: React.FC = () => {
             </h2>
           </div>
 
-          {/* ONLINE / OFFLINE Status Badge */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-4 shrink-0">
+            {/* ONLINE / OFFLINE Status Badge */}
             <div
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+              className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
                 isOnline
                   ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                   : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
@@ -229,6 +324,72 @@ export const Layout: React.FC = () => {
               </span>
               <span>{isOnline ? 'ONLINE' : 'OFFLINE'}</span>
             </div>
+
+            {/* User Profile & Role Dropdown */}
+            {user && (
+              <div className="relative" ref={userMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  aria-expanded={isUserMenuOpen}
+                  aria-haspopup="true"
+                  className="flex items-center gap-2.5 p-1.5 pl-2 rounded-xl bg-slate-900 border border-slate-800 hover:border-slate-700 transition-all focus:outline-none focus:ring-2 focus:ring-cyan-400 cursor-pointer"
+                >
+                  <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-white font-bold text-xs uppercase shadow-sm">
+                    {user.username.charAt(0)}
+                  </div>
+                  <div className="text-left hidden md:block">
+                    <div className="text-xs font-semibold text-slate-200 leading-tight">
+                      {user.username}
+                    </div>
+                  </div>
+                  <span
+                    className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full border ${
+                      user.role === 'admin'
+                        ? 'bg-purple-500/15 text-purple-300 border-purple-500/30'
+                        : 'bg-slate-800 text-slate-300 border-slate-700'
+                    }`}
+                  >
+                    {user.role}
+                  </span>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 mr-1" />
+                </button>
+
+                {/* Dropdown Menu */}
+                {isUserMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-52 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl py-1.5 z-50 animate-in fade-in zoom-in-95">
+                    <div className="px-3 py-2 border-b border-slate-800/80 mb-1">
+                      <div className="text-xs text-slate-400">Signed in as</div>
+                      <div className="text-xs font-bold text-slate-100 truncate">{user.username}</div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsUserMenuOpen(false);
+                        setIsChangePasswordOpen(true);
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:text-white hover:bg-slate-800/80 flex items-center gap-2 transition-colors cursor-pointer"
+                    >
+                      <KeyRound className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>Change password</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsUserMenuOpen(false);
+                        logout();
+                      }}
+                      className="w-full text-left px-3 py-2 text-xs text-red-400 hover:text-red-300 hover:bg-red-950/30 flex items-center gap-2 transition-colors cursor-pointer"
+                    >
+                      <LogOut className="w-3.5 h-3.5" />
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </header>
 
@@ -244,6 +405,118 @@ export const Layout: React.FC = () => {
           </footer>
         </main>
       </div>
+
+      {/* Change Password Modal */}
+      {isChangePasswordOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full shadow-2xl relative">
+            <button
+              type="button"
+              onClick={() => setIsChangePasswordOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-200"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-4">
+              <div className="p-2 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                <KeyRound className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-100">Change Password</h3>
+                <p className="text-xs text-slate-400">Update your account credentials</p>
+              </div>
+            </div>
+
+            {changePasswordError && (
+              <div className="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-500/30 text-red-200 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+                <span>{changePasswordError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePasswordSubmit} className="space-y-4">
+              <div>
+                <label
+                  htmlFor="user-current-password"
+                  className="block text-xs font-medium text-slate-300 mb-1.5"
+                >
+                  Current Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="user-current-password"
+                    type={showCurrentPassword ? 'text' : 'password'}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    required
+                    disabled={changePasswordLoading}
+                    className="w-full px-3 py-2 pr-10 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-200"
+                  >
+                    {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="user-new-password"
+                  className="block text-xs font-medium text-slate-300 mb-1.5"
+                >
+                  New Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="user-new-password"
+                    type={showNewPassword ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    disabled={changePasswordLoading}
+                    className="w-full px-3 py-2 pr-10 bg-slate-950 border border-slate-800 rounded-xl text-slate-100 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPassword(!showNewPassword)}
+                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-200"
+                  >
+                    {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">Minimum 8 characters</p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsChangePasswordOpen(false)}
+                  disabled={changePasswordLoading}
+                  className="px-3.5 py-2 rounded-xl text-xs font-medium text-slate-300 hover:bg-slate-800 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={changePasswordLoading}
+                  className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-medium text-xs rounded-xl transition-all disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {changePasswordLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <KeyRound className="w-3.5 h-3.5" />
+                  )}
+                  <span>Update Password</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,22 +1,36 @@
 import os
 import glob
 import requests
+from auth import init_auth_db, create_user, get_user_by_username
 
 BASE_URL = "http://localhost:8000"
+
+def get_session():
+    init_auth_db()
+    username = "api_test_admin"
+    password = "AdminPassword123!"
+    if not get_user_by_username(username):
+        create_user(username, password, role="admin")
+    s = requests.Session()
+    r = s.post(f"{BASE_URL}/auth/login", json={"username": username, "password": password})
+    assert r.status_code == 200, f"Login failed: {r.text}"
+    return s
 
 def main():
     print("=" * 70)
     print("API ENDPOINTS, SETTINGS & EDGE CASES TEST SUITE")
     print("=" * 70)
 
-    # 1. Test GET /health
+    # 1. Test GET /health (public)
     print("\n[1] Testing GET /health ...")
     r = requests.get(f"{BASE_URL}/health")
     print(f"Status: {r.status_code} | Response: {r.json()}")
 
+    session = get_session()
+
     # 2. Test GET /settings (Default settings)
     print("\n[2] Testing GET /settings (Default settings)...")
-    r = requests.get(f"{BASE_URL}/settings")
+    r = session.get(f"{BASE_URL}/settings")
     print(f"Status: {r.status_code} | Settings: {r.json()}")
     assert r.status_code == 200
     assert r.json()["require_helmet"] is True
@@ -31,7 +45,7 @@ def main():
         "ppe_conf": 0.25,
         "decision_conf": 0.30
     }
-    r = requests.put(f"{BASE_URL}/settings", json=invalid_payload_1)
+    r = session.put(f"{BASE_URL}/settings", json=invalid_payload_1)
     print(f"Status: {r.status_code} (Expected 400) | Detail: {r.json()}")
     assert r.status_code == 400
 
@@ -44,7 +58,7 @@ def main():
         "ppe_conf": 0.25,
         "decision_conf": 0.30
     }
-    r = requests.put(f"{BASE_URL}/settings", json=invalid_payload_2)
+    r = session.put(f"{BASE_URL}/settings", json=invalid_payload_2)
     print(f"Status: {r.status_code} (Expected 400) | Detail: {r.json()}")
     assert r.status_code == 400
 
@@ -57,14 +71,14 @@ def main():
         "ppe_conf": 0.20,
         "decision_conf": 0.35
     }
-    r = requests.put(f"{BASE_URL}/settings", json=valid_payload)
+    r = session.put(f"{BASE_URL}/settings", json=valid_payload)
     print(f"Status: {r.status_code} | Updated Settings: {r.json()}")
     assert r.status_code == 200
     assert r.json()["require_vest"] is False
 
     # 6. Test POST /settings/reset
     print("\n[6] Testing POST /settings/reset ...")
-    r = requests.post(f"{BASE_URL}/settings/reset")
+    r = session.post(f"{BASE_URL}/settings/reset")
     print(f"Status: {r.status_code} | Reset Settings: {r.json()}")
     assert r.status_code == 200
     assert r.json()["require_vest"] is True
@@ -80,7 +94,7 @@ def main():
         filename = os.path.basename(img_path)
         with open(img_path, "rb") as f:
             files = {"file": (filename, f, "image/png")}
-            res = requests.post(f"{BASE_URL}/analyze", files=files)
+            res = session.post(f"{BASE_URL}/analyze", files=files)
             
         print(f"\nUpload: {filename} -> Status {res.status_code}")
         if res.status_code == 200:
@@ -97,7 +111,7 @@ def main():
 
     # 8. Test GET /history
     print("\n[8] Testing GET /history ...")
-    r = requests.get(f"{BASE_URL}/history")
+    r = session.get(f"{BASE_URL}/history")
     print(f"Status: {r.status_code}")
     history_items = r.json()
     print(f"History contains {len(history_items)} record(s).")
@@ -108,7 +122,7 @@ def main():
     if analysis_ids:
         target_id = analysis_ids[0]
         print(f"\n[9] Testing GET /history/{target_id} ...")
-        r = requests.get(f"{BASE_URL}/history/{target_id}")
+        r = session.get(f"{BASE_URL}/history/{target_id}")
         print(f"Status: {r.status_code}")
         data = r.json()
         print(f"  ID: {data['id']} | Filename: {data['filename']}")
@@ -117,26 +131,26 @@ def main():
 
     # 10. Test GET /stats
     print("\n[10] Testing GET /stats ...")
-    r = requests.get(f"{BASE_URL}/stats")
+    r = session.get(f"{BASE_URL}/stats")
     print(f"Status: {r.status_code} | Stats: {r.json()}")
 
     # 11. Edge Case Test: Corrupt file with .jpg extension
     print("\n[11] Edge Case Test: Uploading corrupt file with .jpg extension...")
     corrupt_payload = ("corrupt_image.jpg", b"INVALID_BINARY_CORRUPTED_DATA_HEADER", "image/jpeg")
-    r = requests.post(f"{BASE_URL}/analyze", files={"file": corrupt_payload})
+    r = session.post(f"{BASE_URL}/analyze", files={"file": corrupt_payload})
     print(f"Status Code: {r.status_code} (Expected 400)")
     print(f"Response Body: {r.json()}")
 
     # 12. Edge Case Test: Uploading unsupported file (.txt)
     print("\n[12] Edge Case Test: Uploading unsupported file (.txt)...")
     txt_payload = ("document.txt", b"Plain text file", "text/plain")
-    r = requests.post(f"{BASE_URL}/analyze", files={"file": txt_payload})
+    r = session.post(f"{BASE_URL}/analyze", files={"file": txt_payload})
     print(f"Status Code: {r.status_code} (Expected 400)")
     print(f"Response Body: {r.json()}")
 
     # 13. Edge Case Test: Uploading with missing file field
     print("\n[13] Edge Case Test: Uploading with missing file field...")
-    r = requests.post(f"{BASE_URL}/analyze", files={})
+    r = session.post(f"{BASE_URL}/analyze", files={})
     print(f"Status Code: {r.status_code} (Expected 422)")
     print(f"Response Body: {r.json()}")
 

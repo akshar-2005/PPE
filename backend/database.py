@@ -35,11 +35,13 @@ def init_db():
             )
         """)
         
-        # Safe migration for settings_json column in analyses table
+        # Safe migration for settings_json and analyzed_by columns in analyses table
         cursor.execute("PRAGMA table_info(analyses)")
         columns = [row[1] for row in cursor.fetchall()]
         if "settings_json" not in columns:
             cursor.execute("ALTER TABLE analyses ADD COLUMN settings_json TEXT")
+        if "analyzed_by" not in columns:
+            cursor.execute("ALTER TABLE analyses ADD COLUMN analyzed_by TEXT")
 
         # 2. settings table (single row with id=1)
         cursor.execute("""
@@ -95,6 +97,12 @@ def init_db():
                 settings_json TEXT NOT NULL
             )
         """)
+
+        # Safe migration for analyzed_by in video_analyses table
+        cursor.execute("PRAGMA table_info(video_analyses)")
+        v_columns = [row[1] for row in cursor.fetchall()]
+        if "analyzed_by" not in v_columns:
+            cursor.execute("ALTER TABLE video_analyses ADD COLUMN analyzed_by TEXT")
 
         # 4. alerts table
         cursor.execute("""
@@ -169,7 +177,8 @@ def save_analysis(
     image_path: str,
     workers: list,
     created_at: str = None,
-    settings: dict = None
+    settings: dict = None,
+    analyzed_by: str = None
 ):
     init_db()
     if created_at is None:
@@ -183,9 +192,9 @@ def save_analysis(
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO analyses (id, created_at, filename, total, compliant, violations, image_path, workers_json, settings_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (analysis_id, created_at, filename, int(total), int(compliant), int(violations), image_path, workers_json, settings_json))
+            INSERT INTO analyses (id, created_at, filename, total, compliant, violations, image_path, workers_json, settings_json, analyzed_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (analysis_id, created_at, filename, int(total), int(compliant), int(violations), image_path, workers_json, settings_json, analyzed_by))
         conn.commit()
 
 def list_analyses():
@@ -194,7 +203,7 @@ def list_analyses():
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, created_at, filename, total, compliant, violations, image_path
+            SELECT id, created_at, filename, total, compliant, violations, image_path, analyzed_by
             FROM analyses
             ORDER BY created_at DESC
         """)
@@ -207,7 +216,7 @@ def get_analysis(analysis_id: str):
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT id, created_at, filename, total, compliant, violations, image_path, workers_json, settings_json
+            SELECT id, created_at, filename, total, compliant, violations, image_path, workers_json, settings_json, analyzed_by
             FROM analyses
             WHERE id = ?
         """, (analysis_id,))
@@ -262,12 +271,13 @@ def get_stats():
             "compliance_rate": float(compliance_rate)
         }
 
-def save_video_analysis(record: dict):
+def save_video_analysis(record: dict, analyzed_by: str = None):
     init_db()
     created_at = record.get("created_at") or datetime.now(timezone.utc).isoformat()
     workers_json = json.dumps(record.get("workers", []))
     keyframes_json = json.dumps(record.get("keyframes", []))
     settings_json = json.dumps(record.get("settings", {}))
+    user = analyzed_by if analyzed_by is not None else record.get("analyzed_by")
     
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -276,8 +286,8 @@ def save_video_analysis(record: dict):
                 id, created_at, filename, duration_seconds, frames_analyzed,
                 total_video_frames, truncated, unique_workers, compliant,
                 violations, workers_json, video_url, video_codec,
-                keyframes_json, settings_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                keyframes_json, settings_json, analyzed_by
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             record["id"],
             created_at,
@@ -293,7 +303,8 @@ def save_video_analysis(record: dict):
             record.get("video_url", ""),
             record.get("video_codec", "mp4v"),
             keyframes_json,
-            settings_json
+            settings_json,
+            user
         ))
         conn.commit()
 
@@ -305,7 +316,7 @@ def list_video_analyses():
         cursor.execute("""
             SELECT id, created_at, filename, duration_seconds, frames_analyzed,
                    total_video_frames, truncated, unique_workers, compliant, violations,
-                   video_url, video_codec, keyframes_json, settings_json
+                   video_url, video_codec, keyframes_json, settings_json, analyzed_by
             FROM video_analyses
             ORDER BY created_at DESC
         """)
@@ -329,7 +340,7 @@ def get_video_analysis_by_id(analysis_id: str):
         cursor.execute("""
             SELECT id, created_at, filename, duration_seconds, frames_analyzed,
                    total_video_frames, truncated, unique_workers, compliant, violations,
-                   workers_json, video_url, video_codec, keyframes_json, settings_json
+                   workers_json, video_url, video_codec, keyframes_json, settings_json, analyzed_by
             FROM video_analyses
             WHERE id = ?
         """, (analysis_id,))

@@ -49,28 +49,38 @@ export const ResultView: React.FC<ResultViewProps> = ({ result }) => {
       <StatusBanner total={result.total} violations={result.violations} />
 
       {/* Audit Settings Line Under Banner */}
-      {result.settings && (
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400">
-          <div className="flex items-center gap-2">
-            <Sliders className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-            <span>
-              <strong className="text-slate-300">Mandated Equipment:</strong>{' '}
-              {[
-                result.settings.require_helmet !== false ? 'Hardhat' : null,
-                result.settings.require_vest !== false ? 'Safety Vest' : null,
-                result.settings.require_mask ? 'Mask' : null,
-              ]
-                .filter(Boolean)
-                .join(', ') || 'None'}
-            </span>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400">
+        <div className="flex items-center gap-3 flex-wrap">
+          {result.settings && (
+            <div className="flex items-center gap-2">
+              <Sliders className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span>
+                <strong className="text-slate-300">Mandated Equipment:</strong>{' '}
+                {[
+                  result.settings.require_helmet !== false ? 'Hardhat' : null,
+                  result.settings.require_vest !== false ? 'Safety Vest' : null,
+                  result.settings.require_mask ? 'Mask' : null,
+                ]
+                  .filter(Boolean)
+                  .join(', ') || 'None'}
+              </span>
+            </div>
+          )}
+          {result.analyzed_by && (
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-800/80 border border-slate-700/60 text-slate-300">
+              <span className="text-slate-400">Analyzed by</span>
+              <strong className="text-cyan-400 font-semibold">{result.analyzed_by}</strong>
+            </div>
+          )}
+        </div>
+        {result.settings && (
           <div className="flex items-center gap-3 text-slate-400 font-mono text-[11px]">
             <span>Person Conf: {result.settings.person_conf.toFixed(2)}</span>
             <span>PPE Conf: {result.settings.ppe_conf.toFixed(2)}</span>
             <span>Decision: {result.settings.decision_conf.toFixed(2)}</span>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Annotated Image & Breakdown Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -90,6 +100,7 @@ export const ResultView: React.FC<ResultViewProps> = ({ result }) => {
             className="relative group overflow-hidden rounded-xl border border-slate-800 bg-slate-950 cursor-pointer focus-visible:ring-2 focus-visible:ring-cyan-400 focus-visible:outline-none"
           >
             <img
+              crossOrigin="use-credentials"
               src={result.image_url}
               alt={`Annotated detection results for ${result.filename}`}
               className="w-full h-auto max-h-[500px] object-contain rounded-xl transition-transform duration-300 group-hover:scale-[1.01]"

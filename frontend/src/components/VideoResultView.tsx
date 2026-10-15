@@ -79,8 +79,13 @@ export const VideoResultView: React.FC<VideoResultViewProps> = ({ result, onRese
               <Film className="w-5 h-5 text-cyan-400" />
               Annotated Output Video
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {result.filename} • {result.duration_seconds}s • Codec: {result.video_codec.toUpperCase()}
+            <p className="text-xs text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+              <span>{result.filename} • {result.duration_seconds}s • Codec: {result.video_codec.toUpperCase()}</span>
+              {result.analyzed_by && (
+                <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700/60 text-[11px]">
+                  Analyzed by <strong className="text-cyan-400 font-semibold">{result.analyzed_by}</strong>
+                </span>
+              )}
             </p>
           </div>
 
@@ -121,6 +126,7 @@ export const VideoResultView: React.FC<VideoResultViewProps> = ({ result, onRese
           <video
             controls
             playsInline
+            crossOrigin="use-credentials"
             src={result.video_url}
             className="w-full h-full object-contain"
           >
@@ -155,6 +161,7 @@ export const VideoResultView: React.FC<VideoResultViewProps> = ({ result, onRese
                 className="group relative rounded-xl overflow-hidden border border-slate-800 hover:border-cyan-500/50 bg-slate-950 aspect-video cursor-pointer transition-all"
               >
                 <img
+                  crossOrigin="use-credentials"
                   src={kfUrl}
                   alt={`Keyframe ${idx + 1}`}
                   className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"

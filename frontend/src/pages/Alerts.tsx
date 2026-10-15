@@ -12,6 +12,7 @@ import { API_BASE } from '../config';
 import type { LiveAlert } from '../types';
 import { ImageViewerModal } from '../components/ImageViewerModal';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 
 export const AlertsPage: React.FC = () => {
   const [alerts, setAlerts] = useState<LiveAlert[]>([]);
@@ -24,6 +25,8 @@ export const AlertsPage: React.FC = () => {
   const [viewerTitle, setViewerTitle] = useState<string>('');
 
   const { success, error } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   const fetchAlerts = async () => {
     setLoading(true);
@@ -47,6 +50,7 @@ export const AlertsPage: React.FC = () => {
   }, []);
 
   const handleClearAlerts = async () => {
+    if (!isAdmin) return;
     if (!window.confirm('Are you sure you want to delete all stored alerts and snapshot files?')) {
       return;
     }
@@ -92,14 +96,16 @@ export const AlertsPage: React.FC = () => {
             Refresh
           </button>
 
-          <button
-            onClick={handleClearAlerts}
-            disabled={isClearing || alerts.length === 0}
-            className="px-4 py-2 bg-rose-950/80 hover:bg-rose-900/90 border border-rose-800/60 text-rose-300 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 disabled:opacity-40"
-          >
-            <Trash2 className="w-4 h-4" />
-            {isClearing ? 'Clearing...' : 'Clear All Alerts'}
-          </button>
+          {isAdmin && (
+            <button
+              onClick={handleClearAlerts}
+              disabled={isClearing || alerts.length === 0}
+              className="px-4 py-2 bg-rose-950/80 hover:bg-rose-900/90 border border-rose-800/60 text-rose-300 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 disabled:opacity-40"
+            >
+              <Trash2 className="w-4 h-4" />
+              {isClearing ? 'Clearing...' : 'Clear All Alerts'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -136,6 +142,7 @@ export const AlertsPage: React.FC = () => {
               <div className="relative aspect-video bg-black/60 group overflow-hidden">
                 {alert.snapshot_path ? (
                   <img
+                    crossOrigin="use-credentials"
                     src={`${API_BASE}${alert.snapshot_path}`}
                     alt={alert.message}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300 cursor-pointer"

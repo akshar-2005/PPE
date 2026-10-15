@@ -10,11 +10,28 @@ import threading
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from auth import (
+    init_auth_db,
+    count_users,
+    count_active_admins,
+    authenticate_user,
+    create_session,
+    validate_session,
+    delete_session,
+    create_user,
+    list_users,
+    delete_user,
+    reset_user_password,
+    change_user_password,
+    check_login_rate_limit,
+    record_failed_login,
+    clear_failed_logins
+)
 from database import (
     init_db,
     save_analysis,
@@ -79,7 +96,7 @@ current_active_job_id = None
 ALLOWED_VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".webm"}
 MAX_VIDEO_SIZE = 50 * 1024 * 1024 # 50 MB
 
-def run_video_job(job_id: str, input_path: str, filename: str, settings: dict, base_url: str):
+def run_video_job(job_id: str, input_path: str, filename: str, settings: dict, base_url: str, analyzed_by: str = None):
     global current_active_job_id
     try:
         def progress_cb(pct: int, msg: str):
@@ -119,11 +136,12 @@ def run_video_job(job_id: str, input_path: str, filename: str, settings: dict, b
             "video_url": video_url,
             "video_codec": raw_res["video_codec"],
             "keyframes": keyframe_urls,
-            "settings": sanitize(settings)
+            "settings": sanitize(settings),
+            "analyzed_by": analyzed_by
         }
 
         # Save to database
-        save_video_analysis(final_res)
+        save_video_analysis(final_res, analyzed_by=analyzed_by)
 
         video_jobs[job_id]["status"] = "done"
         video_jobs[job_id]["progress"] = 100
@@ -153,9 +171,31 @@ class SettingsModel(BaseModel):
     ppe_conf: float
     decision_conf: float
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    role: str = "user"
+
+class PasswordResetRequest(BaseModel):
+    password: str
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    init_auth_db()
+    if count_users() == 0:
+        print("\n" + "=" * 70)
+        print("WARNING: No users found in auth.db!")
+        print("Please run 'python create_admin.py' to create the initial admin user.")
+        print("=" * 70 + "\n")
     # Model warm-up on server startup
     try:
         dummy_img = np.zeros((300, 300, 3), dtype=np.uint8)
@@ -169,13 +209,11 @@ app = FastAPI(title="PPE Vision Safety API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
 
 def sanitize(val):
     if isinstance(val, (np.integer, int)):
@@ -190,8 +228,126 @@ def sanitize(val):
         return {k: sanitize(v) for k, v in val.items()}
     return val
 
+# ----------------- Auth Dependencies -----------------
+
+def require_user(request: Request) -> dict:
+    session_token = request.cookies.get("ppe_session")
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    user = validate_session(session_token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+    return user
+
+def require_admin(user: dict = Depends(require_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return user
+
+# ----------------- Static Outputs with Auth -----------------
+
+@app.get("/outputs/{file_path:path}")
+def serve_output_file(file_path: str, user: dict = Depends(require_user)):
+    clean_subpath = os.path.normpath(file_path).lstrip("\\/")
+    full_path = os.path.abspath(os.path.join(OUTPUTS_DIR, clean_subpath))
+    if not full_path.startswith(os.path.abspath(OUTPUTS_DIR)):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.isfile(full_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(full_path)
+
+# ----------------- Auth Endpoints -----------------
+
+@app.post("/auth/login")
+def login_endpoint(payload: LoginRequest, response: Response):
+    username = payload.username.strip()
+    password = payload.password
+
+    # Rate limiting: 5 failed attempts in 5 minutes locks out for 5 minutes
+    remaining = check_login_rate_limit(username)
+    if remaining is not None:
+        mins = max(1, (remaining + 59) // 60)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many failed login attempts. Please wait {mins} minute(s) before trying again."
+        )
+
+    user = authenticate_user(username, password)
+    if not user:
+        record_failed_login(username)
+        remaining_now = check_login_rate_limit(username)
+        if remaining_now is not None:
+            mins = max(1, (remaining_now + 59) // 60)
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many failed login attempts. Please wait {mins} minute(s) before trying again."
+            )
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    clear_failed_logins(username)
+    token = create_session(user["id"])
+    response.set_cookie(
+        key="ppe_session",
+        value=token,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        max_age=8 * 3600
+    )
+    return {"username": user["username"], "role": user["role"]}
+
+@app.post("/auth/logout")
+def logout_endpoint(request: Request, response: Response):
+    token = request.cookies.get("ppe_session")
+    if token:
+        delete_session(token)
+    response.delete_cookie(key="ppe_session", path="/", samesite="lax")
+    return {"message": "Logged out successfully"}
+
+@app.get("/auth/me")
+def me_endpoint(user: dict = Depends(require_user)):
+    return {"username": user["username"], "role": user["role"]}
+
+@app.get("/auth/users")
+def list_users_endpoint(admin: dict = Depends(require_admin)):
+    return list_users()
+
+@app.post("/auth/users")
+def create_user_endpoint(payload: CreateUserRequest, admin: dict = Depends(require_admin)):
+    try:
+        new_user = create_user(
+            username=payload.username,
+            password=payload.password,
+            role=payload.role
+        )
+        return new_user
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/auth/users/{user_id}")
+def delete_user_endpoint(user_id: int, admin: dict = Depends(require_admin)):
+    ok, msg = delete_user(user_id, admin["id"])
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"message": msg}
+
+@app.post("/auth/users/{user_id}/password")
+def reset_password_endpoint(user_id: int, payload: PasswordResetRequest, admin: dict = Depends(require_admin)):
+    try:
+        reset_user_password(user_id, payload.password)
+        return {"message": "Password updated successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/auth/change-password")
+def change_password_endpoint(payload: ChangePasswordRequest, user: dict = Depends(require_user)):
+    ok, msg = change_user_password(user["id"], payload.current_password, payload.new_password)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"message": msg}
+
 @app.get("/")
-def root():
+def root(user: dict = Depends(require_user)):
     return {
         "status": "online",
         "service": "PPE Vision Safety API",
@@ -205,11 +361,11 @@ def health_check():
     return {"status": "online"}
 
 @app.get("/settings")
-def get_settings_endpoint():
+def get_settings_endpoint(user: dict = Depends(require_user)):
     return get_settings()
 
 @app.put("/settings")
-def update_settings_endpoint(payload: SettingsModel):
+def update_settings_endpoint(payload: SettingsModel, admin: dict = Depends(require_admin)):
     if not (0.05 <= payload.person_conf <= 0.95):
         raise HTTPException(
             status_code=400,
@@ -239,14 +395,14 @@ def update_settings_endpoint(payload: SettingsModel):
     return updated
 
 @app.post("/settings/reset")
-def reset_settings_endpoint():
+def reset_settings_endpoint(admin: dict = Depends(require_admin)):
     return reset_settings()
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_FILE_SIZE = 10 * 1024 * 1024 # 10 MB
 
 @app.post("/analyze")
-def analyze_endpoint(request: Request, file: UploadFile = File(...)):
+def analyze_endpoint(request: Request, file: UploadFile = File(...), user: dict = Depends(require_user)):
     if not file or not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded.")
         
@@ -297,7 +453,8 @@ def analyze_endpoint(request: Request, file: UploadFile = File(...)):
         image_path=out_filepath,
         workers=sanitized_workers,
         created_at=created_at,
-        settings=current_settings
+        settings=current_settings,
+        analyzed_by=user["username"]
     )
 
     base_url = str(request.base_url).rstrip("/")
@@ -312,11 +469,12 @@ def analyze_endpoint(request: Request, file: UploadFile = File(...)):
         "violations": sanitize(analysis_result["violations"]),
         "workers": sanitized_workers,
         "settings": sanitized_settings,
-        "image_url": image_url
+        "image_url": image_url,
+        "analyzed_by": user["username"]
     }
 
 @app.post("/analyze-video")
-def analyze_video_endpoint(request: Request, file: UploadFile = File(...)):
+def analyze_video_endpoint(request: Request, file: UploadFile = File(...), user: dict = Depends(require_user)):
     global current_active_job_id
     if not file or not file.filename:
         raise HTTPException(status_code=400, detail="No video file uploaded.")
@@ -372,7 +530,7 @@ def analyze_video_endpoint(request: Request, file: UploadFile = File(...)):
     # Launch processing in a background worker thread
     worker_thread = threading.Thread(
         target=run_video_job,
-        args=(job_id, temp_input_path, file.filename, current_settings, base_url),
+        args=(job_id, temp_input_path, file.filename, current_settings, base_url, user["username"]),
         daemon=True
     )
     worker_thread.start()
@@ -380,7 +538,7 @@ def analyze_video_endpoint(request: Request, file: UploadFile = File(...)):
     return {"job_id": job_id}
 
 @app.get("/jobs/{job_id}")
-def get_job_status_endpoint(job_id: str):
+def get_job_status_endpoint(job_id: str, user: dict = Depends(require_user)):
     if job_id in video_jobs:
         job = video_jobs[job_id]
         return {
@@ -403,18 +561,18 @@ def get_job_status_endpoint(job_id: str):
     raise HTTPException(status_code=404, detail="Job not found.")
 
 @app.get("/video-history")
-def video_history_list_endpoint():
+def video_history_list_endpoint(user: dict = Depends(require_user)):
     return list_video_analyses()
 
 @app.get("/video-history/{analysis_id}")
-def video_history_detail_endpoint(analysis_id: str):
+def video_history_detail_endpoint(analysis_id: str, user: dict = Depends(require_user)):
     record = get_video_analysis_by_id(analysis_id)
     if not record:
         raise HTTPException(status_code=404, detail="Video analysis record not found.")
     return record
 
 @app.get("/history")
-def history_list_endpoint(request: Request):
+def history_list_endpoint(request: Request, user: dict = Depends(require_user)):
     rows = list_analyses()
     base_url = str(request.base_url).rstrip("/")
     results = []
@@ -427,12 +585,13 @@ def history_list_endpoint(request: Request):
             "total": sanitize(r["total"]),
             "compliant": sanitize(r["compliant"]),
             "violations": sanitize(r["violations"]),
-            "image_url": f"{base_url}/outputs/{out_filename}"
+            "image_url": f"{base_url}/outputs/{out_filename}",
+            "analyzed_by": r.get("analyzed_by")
         })
     return results
 
 @app.get("/history/{analysis_id}")
-def history_detail_endpoint(request: Request, analysis_id: str):
+def history_detail_endpoint(request: Request, analysis_id: str, user: dict = Depends(require_user)):
     record = get_analysis(analysis_id)
     if not record:
         raise HTTPException(status_code=404, detail="Analysis record not found.")
@@ -452,7 +611,7 @@ def history_detail_endpoint(request: Request, analysis_id: str):
     return record
 
 @app.get("/stats")
-def stats_endpoint():
+def stats_endpoint(user: dict = Depends(require_user)):
     return get_stats()
 
 # =====================================================================
@@ -460,7 +619,7 @@ def stats_endpoint():
 # =====================================================================
 
 @app.post("/live/start")
-def live_start_endpoint():
+def live_start_endpoint(user: dict = Depends(require_user)):
     clean_idle_sessions()
     session_id = uuid.uuid4().hex[:12]
     with live_sessions_lock:
@@ -471,7 +630,8 @@ def live_start_endpoint():
 def live_frame_endpoint(
     request: Request,
     session_id: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    user: dict = Depends(require_user)
 ):
     if not file or not file.filename:
         raise HTTPException(status_code=400, detail="Missing frame file")
@@ -642,7 +802,7 @@ def live_frame_endpoint(
         raise HTTPException(status_code=500, detail="Frame analysis failed")
 
 @app.post("/live/stop")
-async def live_stop_endpoint(request: Request):
+async def live_stop_endpoint(request: Request, user: dict = Depends(require_user)):
     sid = request.query_params.get("session_id")
     if not sid:
         content_type = request.headers.get("content-type", "")
@@ -665,18 +825,18 @@ async def live_stop_endpoint(request: Request):
     return {"status": "stopped", "session_id": sid}
 
 @app.get("/alerts")
-def get_alerts_endpoint(limit: int = 50):
+def get_alerts_endpoint(limit: int = 50, user: dict = Depends(require_user)):
     return list_alerts(limit=limit)
 
 @app.get("/alerts/{alert_id}")
-def get_alert_by_id_endpoint(alert_id: str):
+def get_alert_by_id_endpoint(alert_id: str, user: dict = Depends(require_user)):
     alert = get_alert(alert_id)
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     return alert
 
 @app.post("/alerts/clear")
-def clear_alerts_endpoint():
+def clear_alerts_endpoint(admin: dict = Depends(require_admin)):
     snapshot_paths = clear_alerts()
     deleted_files = 0
     for sp in snapshot_paths:

@@ -21,11 +21,23 @@ import json
 import cv2
 import numpy as np
 import requests
+from auth import init_auth_db, create_user, get_user_by_username
 
 API_URL = "http://127.0.0.1:8000"
 BACKEND_DIR = os.path.dirname(__file__)
 TEST_VIDEOS_DIR = os.path.join(BACKEND_DIR, "test_videos")
 os.makedirs(TEST_VIDEOS_DIR, exist_ok=True)
+
+def get_session():
+    init_auth_db()
+    username = "video_test_admin"
+    password = "AdminPassword123!"
+    if not get_user_by_username(username):
+        create_user(username, password, role="admin")
+    s = requests.Session()
+    r = s.post(f"{API_URL}/auth/login", json={"username": username, "password": password})
+    assert r.status_code == 200, f"Login failed: {r.text}"
+    return s
 
 def create_synthetic_video(image_paths, output_path, fps=25, duration_per_img=4.0):
     """Creates an MP4 clip by showing images for a few seconds each with slight synthetic motion."""
@@ -54,11 +66,11 @@ def create_synthetic_video(image_paths, output_path, fps=25, duration_per_img=4.
     out.release()
     print(f"Created synthetic video at {output_path} ({len(frames)*duration_per_img}s, {len(frames)*frames_per_img} frames)")
 
-def poll_job(job_id, timeout=60):
+def poll_job(session, job_id, timeout=60):
     start = time.time()
     last_prog = -1
     while time.time() - start < timeout:
-        res = requests.get(f"{API_URL}/jobs/{job_id}")
+        res = session.get(f"{API_URL}/jobs/{job_id}")
         assert res.status_code == 200, f"Failed GET /jobs/{job_id}: {res.status_code}"
         data = res.json()
         prog = data.get("progress", 0)
@@ -78,6 +90,8 @@ def run_tests():
     print("PHASE 13: VIDEO ANALYSIS COMPREHENSIVE TEST SUITE")
     print("=" * 75)
     
+    session = get_session()
+
     # 1. Generate test video clips
     demo_dir = os.path.join(os.path.dirname(BACKEND_DIR), "demo_images")
     img_mixed = os.path.join(demo_dir, "1_mixed.png")
@@ -91,7 +105,7 @@ def run_tests():
 
     # 2. Reset settings to default (helmet=True, vest=True, mask=False, 0.40, 0.25, 0.30)
     print("\n[Step 1] Resetting settings to defaults...")
-    res = requests.post(f"{API_URL}/settings/reset")
+    res = session.post(f"{API_URL}/settings/reset")
     assert res.status_code == 200
     print(f"  Current settings: {res.json()}")
 
@@ -99,12 +113,12 @@ def run_tests():
     print("\n[Step 2] Testing video analysis on clip_1_mixed.mp4 (Default settings: Helmet+Vest required)...")
     start_time = time.time()
     with open(clip_mixed_path, "rb") as f:
-        res = requests.post(f"{API_URL}/analyze-video", files={"file": ("clip_1_mixed.mp4", f, "video/mp4")})
+        res = session.post(f"{API_URL}/analyze-video", files={"file": ("clip_1_mixed.mp4", f, "video/mp4")})
     assert res.status_code == 200, f"Upload failed: {res.text}"
     job_id = res.json()["job_id"]
     print(f"  Created Job ID: {job_id}")
     
-    result = poll_job(job_id)
+    result = poll_job(session, job_id)
     elapsed_default = time.time() - start_time
     print(f"  Analysis finished in {elapsed_default:.2f}s")
     print(f"  Result summary: Total Workers={result['unique_workers']}, Compliant={result['compliant']}, Violations={result['violations']}")
@@ -130,7 +144,7 @@ def run_tests():
     # 4. Performance benchmark: require_mask ON vs OFF
     print("\n[Step 3] Performance benchmark: require_mask=True vs require_mask=False...")
     # Set require_mask = True
-    requests.put(f"{API_URL}/settings", json={
+    session.put(f"{API_URL}/settings", json={
         "require_helmet": True,
         "require_vest": True,
         "require_mask": True,
@@ -141,64 +155,64 @@ def run_tests():
     
     start_mask = time.time()
     with open(clip_mixed_path, "rb") as f:
-        res = requests.post(f"{API_URL}/analyze-video", files={"file": ("clip_1_mixed.mp4", f, "video/mp4")})
+        res = session.post(f"{API_URL}/analyze-video", files={"file": ("clip_1_mixed.mp4", f, "video/mp4")})
     assert res.status_code == 200
     job_id_mask = res.json()["job_id"]
-    res_mask = poll_job(job_id_mask)
+    res_mask = poll_job(session, job_id_mask)
     elapsed_mask = time.time() - start_mask
     print(f"  Timing comparison on 8s clip:")
     print(f"    - require_mask=False (Fast path): {elapsed_default:.2f}s")
     print(f"    - require_mask=True  (Head crop): {elapsed_mask:.2f}s")
 
     # Reset settings back
-    requests.post(f"{API_URL}/settings/reset")
+    session.post(f"{API_URL}/settings/reset")
 
     # 5. Test Failure & Edge Cases
     print("\n[Step 4] Testing Failure & Edge Cases...")
     
     # Case A: Unsupported file extension (.txt)
-    res = requests.post(f"{API_URL}/analyze-video", files={"file": ("test.txt", b"dummy content", "text/plain")})
+    res = session.post(f"{API_URL}/analyze-video", files={"file": ("test.txt", b"dummy content", "text/plain")})
     assert res.status_code == 400
     print(f"  [PASS] Unsupported extension rejected: {res.json()['detail']}")
 
     # Case B: Empty / Corrupt video
-    res = requests.post(f"{API_URL}/analyze-video", files={"file": ("corrupt.mp4", b"", "video/mp4")})
+    res = session.post(f"{API_URL}/analyze-video", files={"file": ("corrupt.mp4", b"", "video/mp4")})
     assert res.status_code == 400
     print(f"  [PASS] Empty video rejected: {res.json()['detail']}")
 
     # Case C: Video over 50 MB limit
     large_bytes = b"0" * (51 * 1024 * 1024)
-    res = requests.post(f"{API_URL}/analyze-video", files={"file": ("large.mp4", large_bytes, "video/mp4")})
+    res = session.post(f"{API_URL}/analyze-video", files={"file": ("large.mp4", large_bytes, "video/mp4")})
     assert res.status_code == 400
     print(f"  [PASS] Over 50 MB limit rejected: {res.json()['detail']}")
 
     # Case D: Concurrent upload rejection (429)
     print("  Testing concurrent upload guard (HTTP 429)...")
     with open(clip_multi_path, "rb") as f:
-        res1 = requests.post(f"{API_URL}/analyze-video", files={"file": ("clip_multi_worker.mp4", f, "video/mp4")})
+        res1 = session.post(f"{API_URL}/analyze-video", files={"file": ("clip_multi_worker.mp4", f, "video/mp4")})
     assert res1.status_code == 200
     job1_id = res1.json()["job_id"]
     
     # Immediately try a 2nd upload while job 1 is running
     with open(clip_mixed_path, "rb") as f:
-        res2 = requests.post(f"{API_URL}/analyze-video", files={"file": ("clip_1_mixed.mp4", f, "video/mp4")})
+        res2 = session.post(f"{API_URL}/analyze-video", files={"file": ("clip_1_mixed.mp4", f, "video/mp4")})
     
     if res2.status_code == 429:
         print(f"  [PASS] Concurrent job rejected with HTTP 429: {res2.json()['detail']}")
     else:
         print(f"  Note: 2nd upload returned {res2.status_code} (job 1 may have completed rapidly).")
-    poll_job(job1_id)
+    poll_job(session, job1_id)
 
     # 6. Test GET /video-history and GET /video-history/{id}
     print("\n[Step 5] Testing Video History Endpoints...")
-    v_hist_res = requests.get(f"{API_URL}/video-history")
+    v_hist_res = session.get(f"{API_URL}/video-history")
     assert v_hist_res.status_code == 200
     v_items = v_hist_res.json()
     print(f"  Found {len(v_items)} video history record(s).")
     assert len(v_items) > 0
     first_id = v_items[0]["id"]
     
-    v_detail_res = requests.get(f"{API_URL}/video-history/{first_id}")
+    v_detail_res = session.get(f"{API_URL}/video-history/{first_id}")
     assert v_detail_res.status_code == 200
     detail = v_detail_res.json()
     assert detail["id"] == first_id
@@ -222,7 +236,7 @@ def run_tests():
     for img_p, exp_total, exp_comp, exp_viol in image_tests:
         fname = os.path.basename(img_p)
         with open(img_p, "rb") as f:
-            r = requests.post(f"{API_URL}/analyze", files={"file": (fname, f, "image/png")})
+            r = session.post(f"{API_URL}/analyze", files={"file": (fname, f, "image/png")})
         assert r.status_code == 200, f"Image upload failed for {fname}: {r.text}"
         res_img = r.json()
         assert res_img["total"] == exp_total, f"{fname}: expected {exp_total} total, got {res_img['total']}"

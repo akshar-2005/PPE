@@ -288,6 +288,7 @@ export const HistoryPage: React.FC = () => {
                     <div>
                       <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950 aspect-video mb-4">
                         <img
+                          crossOrigin="use-credentials"
                           src={item.image_url}
                           alt={item.filename}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -314,7 +315,14 @@ export const HistoryPage: React.FC = () => {
                       <h4 className="font-bold text-slate-100 text-base truncate group-hover:text-cyan-400 transition-colors">
                         {item.filename}
                       </h4>
-                      <p className="text-xs text-slate-500 mt-1">{formatDate(item.created_at)}</p>
+                      <div className="flex items-center justify-between text-xs text-slate-500 mt-1">
+                        <span>{formatDate(item.created_at)}</span>
+                        {item.analyzed_by && (
+                          <span className="text-[11px] text-slate-400">
+                            by <strong className="text-slate-300 font-medium">{item.analyzed_by}</strong>
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-4 pt-3 border-t border-slate-800/80 grid grid-cols-3 gap-2 text-center text-xs">
@@ -403,6 +411,7 @@ export const HistoryPage: React.FC = () => {
                       <div className="relative overflow-hidden rounded-xl border border-slate-800 bg-slate-950 aspect-video mb-4 flex items-center justify-center">
                         {thumbnail ? (
                           <img
+                            crossOrigin="use-credentials"
                             src={thumbnail}
                             alt={item.filename}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -436,7 +445,14 @@ export const HistoryPage: React.FC = () => {
                       <h4 className="font-bold text-slate-100 text-base truncate group-hover:text-cyan-400 transition-colors">
                         {item.filename}
                       </h4>
-                      <p className="text-xs text-slate-500 mt-1">{formatDate(item.created_at)}</p>
+                      <div className="flex items-center justify-between text-xs text-slate-500 mt-1">
+                        <span>{formatDate(item.created_at)}</span>
+                        {item.analyzed_by && (
+                          <span className="text-[11px] text-slate-400">
+                            by <strong className="text-slate-300 font-medium">{item.analyzed_by}</strong>
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <div className="mt-4 pt-3 border-t border-slate-800/80 grid grid-cols-3 gap-2 text-center text-xs">

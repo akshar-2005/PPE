@@ -14,6 +14,7 @@ import time
 import requests
 import cv2
 import numpy as np
+from auth import init_auth_db, create_user, get_user_by_username
 
 BACKEND_DIR = os.path.dirname(__file__)
 API_URL = "http://127.0.0.1:8000"
@@ -22,6 +23,16 @@ os.makedirs(TEST_VIDEOS_DIR, exist_ok=True)
 
 from tracker import IoUTracker, compute_iou
 
+def get_session():
+    init_auth_db()
+    username = "crossing_test_admin"
+    password = "AdminPassword123!"
+    if not get_user_by_username(username):
+        create_user(username, password, role="admin")
+    s = requests.Session()
+    r = s.post(f"{API_URL}/auth/login", json={"username": username, "password": password})
+    assert r.status_code == 200, f"Login failed: {r.text}"
+    return s
 
 def test_crossing_simulation():
     """
@@ -88,11 +99,11 @@ def create_synthetic_video(image_paths, output_path, fps=25, duration_per_img=4.
     print(f"Created synthetic video at {output_path} ({len(frames)*duration_per_img}s, {len(frames)*frames_per_img} frames)")
 
 
-def poll_job(job_id, timeout=60):
+def poll_job(session, job_id, timeout=60):
     start = time.time()
     last_prog = -1
     while time.time() - start < timeout:
-        res = requests.get(f"{API_URL}/jobs/{job_id}")
+        res = session.get(f"{API_URL}/jobs/{job_id}")
         assert res.status_code == 200, f"Failed GET /jobs/{job_id}: {res.status_code}"
         data = res.json()
         prog = data.get("progress", 0)
@@ -113,12 +124,14 @@ def run_full_suite():
     print("PHASE 13 TRACKING ENHANCEMENT & SAMPLING VERIFICATION")
     print("=" * 80)
 
+    session = get_session()
+
     # 1. Tracker Simulation on Crossing Boxes
     test_crossing_simulation()
 
     # 2. Reset settings to default
     print("\n[Step 1] Resetting settings to defaults (require_helmet=True, require_vest=True, require_mask=False)...")
-    res = requests.post(f"{API_URL}/settings/reset")
+    res = session.post(f"{API_URL}/settings/reset")
     assert res.status_code == 200
     print(f"  Current settings: {res.json()}")
 
@@ -131,12 +144,12 @@ def run_full_suite():
     print("\n[Step 2] Testing video analysis at 4 fps sampling rate on clip_1_mixed_4fps.mp4...")
     start_time = time.time()
     with open(clip_mixed_path, "rb") as f:
-        res = requests.post(f"{API_URL}/analyze-video", files={"file": ("clip_1_mixed_4fps.mp4", f, "video/mp4")})
+        res = session.post(f"{API_URL}/analyze-video", files={"file": ("clip_1_mixed_4fps.mp4", f, "video/mp4")})
     assert res.status_code == 200, f"Upload failed: {res.text}"
     job_id = res.json()["job_id"]
     print(f"  Created Job ID: {job_id}")
 
-    result = poll_job(job_id)
+    result = poll_job(session, job_id)
     elapsed = time.time() - start_time
 
     print(f"\n[Step 3] Video Analysis Results (4 fps Sampling):")
@@ -172,7 +185,7 @@ def run_full_suite():
     for img_p, exp_tot, exp_comp, exp_viol in image_tests:
         fname = os.path.basename(img_p)
         with open(img_p, "rb") as f:
-            r = requests.post(f"{API_URL}/analyze", files={"file": (fname, f, "image/png")})
+            r = session.post(f"{API_URL}/analyze", files={"file": (fname, f, "image/png")})
         assert r.status_code == 200, f"Error {r.text}"
         data = r.json()
         assert data["total"] == exp_tot, f"{fname} total expected {exp_tot}, got {data['total']}"

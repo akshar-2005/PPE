@@ -80,6 +80,7 @@ export const ImageViewerModal: React.FC<ImageViewerModalProps> = ({
         {/* Modal Image Body */}
         <div className="p-4 sm:p-6 flex items-center justify-center overflow-auto max-h-[calc(92vh-60px)] w-full bg-slate-950/60">
           <img
+            crossOrigin="use-credentials"
             src={imageUrl}
             alt={title || 'Annotated detection image view'}
             className="max-h-[78vh] max-w-full object-contain rounded-xl shadow-lg border border-slate-800"

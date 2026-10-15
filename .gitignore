@@ -9,9 +9,11 @@ frontend/dist/
 
 # Local data
 backend/history.db
+backend/auth.db
 backend/outputs/*
 !backend/outputs/.gitkeep
 outputs/
+backend/test_videos/*.mp4
 
 
 # OS / editor

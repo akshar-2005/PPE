@@ -30,6 +30,7 @@ export interface AnalysisResult {
   workers: Worker[];
   settings?: AnalysisSettings;
   image_url: string;
+  analyzed_by?: string | null;
 }
 
 export interface HistoryItem {
@@ -40,6 +41,22 @@ export interface HistoryItem {
   compliant: number;
   violations: number;
   image_url: string;
+  analyzed_by?: string | null;
+}
+
+export type UserRole = 'admin' | 'user';
+
+export interface User {
+  id?: number;
+  username: string;
+  role: UserRole;
+  created_at?: string;
+  is_active?: boolean;
+}
+
+export interface AuthState {
+  user: User | null;
+  loading: boolean;
 }
 
 export interface StatsResponse {
@@ -76,6 +93,7 @@ export interface VideoAnalysisResult {
   video_codec: string;
   keyframes: string[];
   settings: AnalysisSettings;
+  analyzed_by?: string | null;
 }
 
 export interface VideoHistoryItem {
@@ -93,6 +111,7 @@ export interface VideoHistoryItem {
   video_codec: string;
   keyframes: string[];
   settings: AnalysisSettings;
+  analyzed_by?: string | null;
 }
 
 export interface JobStatusResponse {

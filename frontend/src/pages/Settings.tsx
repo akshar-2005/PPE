@@ -14,6 +14,7 @@ import {
 import { API_BASE } from '../config';
 import type { AnalysisSettings } from '../types';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
 
 export const SettingsPage: React.FC = () => {
   const [savedSettings, setSavedSettings] = useState<AnalysisSettings | null>(null);
@@ -23,6 +24,8 @@ export const SettingsPage: React.FC = () => {
   const [isResetting, setIsResetting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const { success: toastSuccess, error: toastError } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
 
   const fetchSettings = async () => {
     setIsLoading(true);
@@ -47,7 +50,7 @@ export const SettingsPage: React.FC = () => {
   }, []);
 
   const handleToggleHelmet = () => {
-    if (!formSettings) return;
+    if (!isAdmin || !formSettings) return;
     setFormSettings({
       ...formSettings,
       require_helmet: !formSettings.require_helmet,
@@ -55,7 +58,7 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleToggleVest = () => {
-    if (!formSettings) return;
+    if (!isAdmin || !formSettings) return;
     setFormSettings({
       ...formSettings,
       require_vest: !formSettings.require_vest,
@@ -63,7 +66,7 @@ export const SettingsPage: React.FC = () => {
   };
 
   const handleToggleMask = () => {
-    if (!formSettings) return;
+    if (!isAdmin || !formSettings) return;
     setFormSettings({
       ...formSettings,
       require_mask: !formSettings.require_mask,
@@ -74,7 +77,7 @@ export const SettingsPage: React.FC = () => {
     key: 'person_conf' | 'ppe_conf' | 'decision_conf',
     value: number
   ) => {
-    if (!formSettings) return;
+    if (!isAdmin || !formSettings) return;
     setFormSettings({
       ...formSettings,
       [key]: value,
@@ -184,6 +187,14 @@ export const SettingsPage: React.FC = () => {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn">
+      {/* Read-Only Notice for Regular Users */}
+      {!isAdmin && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 text-xs flex items-center gap-2.5">
+          <Shield className="w-4 h-4 text-amber-400 shrink-0" />
+          <span>Only admins can change settings. Current compliance configuration is displayed in read-only mode.</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-800">
         <div>
@@ -196,31 +207,33 @@ export const SettingsPage: React.FC = () => {
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            onClick={handleReset}
-            disabled={isResetting || isSaving}
-            className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 font-semibold text-xs border border-slate-800 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50"
-          >
-            <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-            <span>Reset to defaults</span>
-          </button>
+        {isAdmin && (
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleReset}
+              disabled={isResetting || isSaving}
+              className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 font-semibold text-xs border border-slate-800 flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+              <span>Reset to defaults</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={isSaving || isInvalid || isUnchanged}
-            className={`px-4 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 transition-all shadow-md ${
-              isSaving || isInvalid || isUnchanged
-                ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
-                : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-cyan-500/20 active:scale-95'
-            }`}
-          >
-            <Save className="w-3.5 h-3.5" />
-            <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={isSaving || isInvalid || isUnchanged}
+              className={`px-4 py-2 rounded-xl font-semibold text-xs flex items-center gap-2 transition-all shadow-md cursor-pointer ${
+                isSaving || isInvalid || isUnchanged
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
+                  : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-cyan-500/20 active:scale-95'
+              }`}
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{isSaving ? 'Saving...' : 'Save Changes'}</span>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 1. Required PPE Section */}
@@ -236,16 +249,19 @@ export const SettingsPage: React.FC = () => {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
           {/* Hardhat / Helmet Toggle Card */}
           <div
-            onClick={handleToggleHelmet}
+            onClick={isAdmin ? handleToggleHelmet : undefined}
             role="button"
-            tabIndex={0}
+            tabIndex={isAdmin ? 0 : -1}
             onKeyDown={(e) => {
+              if (!isAdmin) return;
               if (e.key === ' ' || e.key === 'Enter') {
                 e.preventDefault();
                 handleToggleHelmet();
               }
             }}
-            className={`p-4 rounded-xl border flex items-center justify-between cursor-pointer transition-all duration-200 select-none ${
+            className={`p-4 rounded-xl border flex items-center justify-between transition-all duration-200 select-none ${
+              isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'
+            } ${
               formSettings.require_helmet
                 ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300 shadow-sm'
                 : 'bg-slate-950/40 border-slate-800 hover:border-slate-700 text-slate-400'
@@ -282,16 +298,19 @@ export const SettingsPage: React.FC = () => {
 
           {/* Safety Vest Toggle Card */}
           <div
-            onClick={handleToggleVest}
+            onClick={isAdmin ? handleToggleVest : undefined}
             role="button"
-            tabIndex={0}
+            tabIndex={isAdmin ? 0 : -1}
             onKeyDown={(e) => {
+              if (!isAdmin) return;
               if (e.key === ' ' || e.key === 'Enter') {
                 e.preventDefault();
                 handleToggleVest();
               }
             }}
-            className={`p-4 rounded-xl border flex items-center justify-between cursor-pointer transition-all duration-200 select-none ${
+            className={`p-4 rounded-xl border flex items-center justify-between transition-all duration-200 select-none ${
+              isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'
+            } ${
               formSettings.require_vest
                 ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300 shadow-sm'
                 : 'bg-slate-950/40 border-slate-800 hover:border-slate-700 text-slate-400'
@@ -328,16 +347,19 @@ export const SettingsPage: React.FC = () => {
 
           {/* Mask Toggle Card */}
           <div
-            onClick={handleToggleMask}
+            onClick={isAdmin ? handleToggleMask : undefined}
             role="button"
-            tabIndex={0}
+            tabIndex={isAdmin ? 0 : -1}
             onKeyDown={(e) => {
+              if (!isAdmin) return;
               if (e.key === ' ' || e.key === 'Enter') {
                 e.preventDefault();
                 handleToggleMask();
               }
             }}
-            className={`p-4 rounded-xl border flex items-center justify-between cursor-pointer transition-all duration-200 select-none ${
+            className={`p-4 rounded-xl border flex items-center justify-between transition-all duration-200 select-none ${
+              isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'
+            } ${
               formSettings.require_mask
                 ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-300 shadow-sm'
                 : 'bg-slate-950/40 border-slate-800 hover:border-slate-700 text-slate-400'
@@ -419,9 +441,10 @@ export const SettingsPage: React.FC = () => {
               min="0.05"
               max="0.95"
               step="0.01"
+              disabled={!isAdmin}
               value={formSettings.person_conf}
               onChange={(e) => handleSliderChange('person_conf', parseFloat(e.target.value))}
-              className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800"
+              className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -449,9 +472,10 @@ export const SettingsPage: React.FC = () => {
               min="0.05"
               max="0.95"
               step="0.01"
+              disabled={!isAdmin}
               value={formSettings.ppe_conf}
               onChange={(e) => handleSliderChange('ppe_conf', parseFloat(e.target.value))}
-              className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800"
+              className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
 
@@ -479,9 +503,10 @@ export const SettingsPage: React.FC = () => {
               min="0.05"
               max="0.95"
               step="0.01"
+              disabled={!isAdmin}
               value={formSettings.decision_conf}
               onChange={(e) => handleSliderChange('decision_conf', parseFloat(e.target.value))}
-              className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800"
+              className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400 border border-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
             />
           </div>
         </div>
